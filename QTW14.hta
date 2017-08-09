@@ -1,0 +1,3164 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="x-ua-compatible" content="ie=edge">
+		<style>
+			html, body {
+				font-family: Arial;
+			}
+			div {
+				border: 1px solid black;
+				background-color: #669933;
+				width: 500px;
+				height: 500px;
+			}
+			svg {
+				background: #004488;
+				background: linear-gradient(#000099, #3399FF);
+			}
+			.bar-value {
+				transform: rotate(90);
+			}
+			.tile-text {
+				font-size: 8pt;
+			}
+		</style>
+		<script src="d3.js"></script>
+		<script src="airline.js"></script>
+	</head>
+	<body>
+		<h3>Question #3 - How many flights per day of week?</h3>
+		<div id="divQ3"></div>
+		<h3>Question #4 - For each year, how many flights per day of week?</h3>
+		<div id="divQ4"></div>
+		<h3>Question #5 - For each year, how many tail numbers are "NA"?</h3>
+		<div id="divQ5"></div>
+		<h3>Question #6 - Which year had the greatest proportion of late flights?</h3>
+		<table><tr><td style="background-color:red">Late</td><td style="background-color:lime">Early</td><td style="background-color:cyan;">On time</td></tr></table>
+		<div id="divQ6"></div>
+		<h3>Question #7A - Which day of the year is best for minimizing arrival delay?</h3>
+		<div id="divQ7A"></div>
+		<h3>Question #7B - Which day of the year is best for minimizing departure delay?</h3>
+		<div id="divQ7B"></div>
+		<h3>Question #7C - Which day of the month is best for minimizing arrival delay?</h3>
+		<div id="divQ7C"></div>
+		<h3>Question #7D - Which day of the month is best for minimizing departure delay?</h3>
+		<div id="divQ7D"></div>
+		<h3>Question #7E - Which day of the week is best for minimizing arrival delay?</h3>
+		<div id="divQ7E"></div>
+		<h3>Question #7F - Which day of the week is best for minimizing departure delay?</h3>
+		<div id="divQ7F"></div>
+		<h3>Question #7G - Which hour is best for minimizing arrival delay?</h3>
+		<div id="divQ7G"></div>
+		<h3>Question #7H - Which hour is best for minimizing departure delay?</h3>
+		<div id="divQ7H"></div>
+		<h3>Question #8 - Which is the best day of the week to fly?</h3>
+		<table><tr><td style="background-color:red">Late</td><td style="background-color:lime">Early</td><td style="background-color:cyan;">On time</td></tr></table>
+		<div id="divQ8"></div>
+		<h3>Question #9 - Which is the best day of the month to fly?</h3>
+		<table><tr><td style="background-color:red">Late</td><td style="background-color:lime">Early</td><td style="background-color:cyan;">On time</td></tr></table>
+		<div id="divQ9"></div>
+		<h3>Question #10A - Are flights given more time to reach destination in later years?</h3>
+		<h4>Plotting the ratio of mean scheduled duration to mean distance for routes per year</h4>
+		<div id="divQ10"></div>
+		<h3>Question #10B - Are flights given more time to reach destination in later years?</h3>
+		<h4>Plotting the ratio of mean scheduled duration to mean distance for routes per month and year</h4>
+		<div id="divQ10B"></div>
+		<h3>Question #14 - How much does weather delay contribute to arrival delay?</h3>
+		<h4>Plotting the percentage of monthly arrival delay attributed to weather delay</h4>
+		<div id="divQ14"></div>
+		<h3>Question #14B - How much does weather delay contribute to arrival delay?</h3>
+		<h4>Plotting the percentage of monthly arrival delay attributed to each delay category</h4>
+		<table><tr>
+			<td style="background-color:red">Weather</td>
+			<td style="background-color:orange">Carrier</td>
+			<td style="background-color:yellow;">NAS</td>
+			<td style="background-color:green;">Security</td>
+			<td style="background-color:cyan;">Late Aircraft</td>
+			<td style="background-color:magenta;">Other</td>
+		</tr></table>
+		<div id="divQ14B"></div>
+		<div id="divQCarrier1"></div>
+
+		<script>
+			var goFSO = new ActiveXObject("Scripting.FileSystemObject");
+			var gnFiles = 0;
+			var gnRecords = 0;
+			var gaYears = [1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008];
+			//var gaYears = [1987, 1988];
+			var gbRedo = false;
+			var goSummary = {};
+			var gaFileStatus = [];
+			var gaCarrier = {};
+			
+			
+			//	Create a function to return the week number
+			Date.prototype.getWeekNumber = function(){
+				var d = new Date(+this);
+				d.setHours(0,0,0,0);
+				d.setDate(d.getDate()+4-(d.getDay()||7));
+				return Math.ceil((((d-new Date(d.getFullYear(),0,1))/8.64e7)+1)/7);
+			};
+			
+			//	Create a function to return the day of the year
+			Date.prototype.getJDay = function() {
+				var Jan1 = new Date(this.getFullYear(),0,1);
+				return ("00" + Math.ceil((this-Jan1)/8.64e7)).slice(-3);
+			}
+
+			//	Converts the aircraft shapes into a linear path object for SVG
+			var bodyDraw = d3.line()
+				.x(function(d) { return d.x;})
+				.y(function(d) { return d.y;})
+			;
+
+			function parseHHMM(xsHHMM) {
+				var psTime = ("0" + xsHHMM).slice(-4);
+				var pnHr = +psTime.slice(0,2);
+				return [pnHr,(pnHr * 60.0) + +psTime.slice(-2)];
+			};
+			
+			function parseNA(xsNA) {
+				if (xsNA == "NA") {
+					return undefined;
+				} else {
+					return +xsNA;
+				}
+			}
+			
+			function WeekdayName(xnWeekday) {
+				switch (xnWeekday) {
+					case 1:
+						return "Monday";
+						break;
+					case 2:
+						return "Tuesday";
+						break;
+					case 3:
+						return "Wednesday";
+						break;
+					case 4:
+						return "Thursday";
+						break;
+					case 5:
+						return "Friday";
+						break;
+					case 6:
+						return "Saturday";
+						break;
+					case 7:
+						return "Sunday";
+				}
+			}
+
+			function MonthName(xnMonth) {
+				switch (xnMonth) {
+					case 1:
+						return "January";
+						break;
+					case 2:
+						return "February";
+						break;
+					case 3:
+						return "March";
+						break;
+					case 4:
+						return "April";
+						break;
+					case 5:
+						return "May";
+						break;
+					case 6:
+						return "June";
+						break;
+					case 7:
+						return "July";
+						break;
+					case 8:
+						return "August";
+						break;
+					case 9:
+						return "September";
+						break;
+					case 10:
+						return "October";
+						break;
+					case 11:
+						return "November";
+						break;
+					case 12:
+						return "December";
+						break;
+				}
+			}
+
+			function Stats() {
+				this.count = 0;
+				this.min = 9E99;
+				this.max = -9E99;
+				this.sum = 0.0;
+				this.sumSq = 0.0;
+				this._sd = undefined;
+				this._var = undefined;
+				this._avg = undefined;
+				this._se = undefined;
+			}
+			
+			Stats.prototype.add = function(xdValue) {
+				if (xdValue) {
+					this.count++;
+					this.min = Math.min(this.min, xdValue);
+					this.max = Math.max(this.max, xdValue);
+					this.sum += xdValue;
+					this.sumSq += (xdValue * xdValue);
+				}
+			}
+			
+			Stats.prototype.mean = function() {
+				if (!this._avg) { this._avg = (this.count > 0) ? (this.sum / this.count) : 0.0;}
+				return this._avg;
+			}
+			
+			Stats.prototype.variance = function() {
+				if (!this._var) { this._var = (this.sumSq - (this.sum * this.sum / this.count)) / (this.count - 1);}
+				return this._var;
+			}
+			
+			Stats.prototype.stdDev = function() {
+				if (!this._sd) { this._sd = Math.sqrt(this.variance()); }
+				return this._sd;
+			}
+			
+			Stats.prototype.stdErr = function() {
+				if (!this._se) { this._se = this.stdDev() / Math.sqrt(this.count);}
+				return this._se;
+			}
+			
+			Stats.prototype.confMean = function() {
+				return [this.mean() - (1.96 * this.stdErr()), this.mean() + (1.96 * this.stdErr())];
+			}
+			
+			function Mean(xoStats) {
+				if (!xoStats._avg) { xoStats._avg = (xoStats.count > 0) ? (xoStats.sum / xoStats.count) : 0.0;}
+				return xoStats._avg;
+			}
+			
+			function Variance(xoStats) {
+				if (!xoStats._var) { xoStats._var = (xoStats.sumSq - (xoStats.sum * xoStats.sum / xoStats.count)) / (xoStats.count - 1);}
+				return xoStats._var;
+			}
+
+			function StdDev(xoStats) {
+				if (!xoStats._sd) { xoStats._sd = Math.sqrt(Variance(xoStats)); }
+				return xoStats._sd;
+			}
+			
+			function StdErr(xoStats) {
+				if (!xoStats._se) { xoStats._se = StdDev(xoStats) / Math.sqrt(xoStats.count);}
+				return xoStats._se;
+			}
+
+			function ConfMean(xoStats) {
+				return [Mean(xoStats) - (1.96 * StdErr(xoStats)), Mean(xoStats) + (1.96 * StdErr(xoStats))];
+			}
+			
+			function FltStats(xnID, xsLabel, xoRec) {
+				this.id = xnID;
+				this.label = xsLabel;
+				this.flights = 0;
+				this.numTailNA = 0;
+				this.actualElapsed = new Stats();
+				this.arrivalDelay = new Stats();
+				this.departureDelay = new Stats();
+				this.distance = new Stats();
+				this.schedDuration = new Stats();
+				this.numCancelled = 0;
+				this.numDiverted = 0;
+				this.carrierDelay = new Stats();
+				this.weatherDelay = new Stats();
+				this.NASDelay = new Stats();
+				this.securityDelay = new Stats();
+				this.lateAC = new Stats();
+				this.numLateTakeoff = 0;
+				this.numLateArrive = 0;
+				this.numEarlyTakeoff = 0;
+				this.numEarlyArrive = 0;
+				
+				if (xoRec) {
+					this.add(xoRec);
+				}
+			}
+			
+			FltStats.prototype.add = function(xoRec) {
+				this.flights += 1;
+				this.numTailNA += xoRec.tailNA;
+				this.actualElapsed.add(xoRec.actElap);
+				this.arrivalDelay.add(xoRec.arrDelay);
+				this.departureDelay.add(xoRec.depDelay);
+				this.distance.add(xoRec.distance);
+				this.schedDuration.add(xoRec.schElap);
+				this.numCancelled += xoRec.cancelled;
+				this.numDiverted += xoRec.diverted;
+				this.carrierDelay.add(xoRec.carrDelay);
+				this.weatherDelay.add(xoRec.WxDelay);
+				this.NASDelay.add(xoRec.NASDelay);
+				this.securityDelay.add(xoRec.SecDelay);
+				this.lateAC.add(xoRec.lateAC);
+				this.numLateTakeoff += (xoRec.depDelay > 0) ? 1 : 0;
+				this.numLateArrive += (xoRec.arrDelay > 0) ? 1 : 0;
+				this.numEarlyTakeoff += (xoRec.depDelay < 0) ? 1 : 0;
+				this.numEarlyArrive += (xoRec.arrDelay < 0) ? 1 : 0;
+			};
+			/*
+				1 Year 1987-2008
+				2 Month 1-12
+				3 DayofMonth 1-31
+				4 DayOfWeek 1 (Monday) - 7 (Sunday)
+				5 DepTime actual departure time (local, hhmm)
+				6 CRSDepTime scheduled departure time (local, hhmm)
+				7 ArrTime actual arrival time (local, hhmm)
+				8 CRSArrTime scheduled arrival time (local, hhmm)
+				9 UniqueCarrier unique carrier code
+				10 FlightNum flight number
+				11 TailNum plane tail number
+				12 ActualElapsedTime in minutes
+				13 CRSElapsedTime in minutes
+				14 AirTime in minutes
+				15 ArrDelay arrival delay, in minutes
+				16 DepDelay departure delay, in minutes
+				17 Origin origin IATA airport code
+				18 Dest destination IATA airport code
+				19 Distance in miles
+				20 TaxiIn taxi in time, in minutes
+				21 TaxiOut taxi out time in minutes
+				22 Cancelled was the flight cancelled?
+				23 CancellationCode reason for cancellation (A = carrier, B = weather, C = NAS, D = security)
+				24 Diverted 1 = yes, 0 = no
+				25 CarrierDelay in minutes
+				26 WeatherDelay in minutes
+				27 NASDelay in minutes
+				28 SecurityDelay in minutes
+				29 LateAircraftDelay in minutes	
+			*/
+
+			function FltRec(xsRec) {
+				var paField = xsRec.split(",");
+				var paTmp;
+
+				this.year = +paField[0];				//	1987	1987,
+				this.month = +paField[1];				//	10		10,
+				this.day = +paField[2];					//	14		12,
+				this.weekday = +paField[3];				//	3		1,
+				this.actDep = parseHHMM(paField[4])[1];	//	741 --> 0741 --> (7 * 60) + 41 = 420 + 41 = 461	NA,
+				paTmp = parseHHMM(paField[5]);
+				this.schDep = paTmp[1];					//	730		1635,
+				this.depHr = paTmp[0];
+				this.actArr = parseHHMM(paField[6])[1];	//	912		NA,
+				paTmp = parseHHMM(paField[7]);
+				this.schArr = paTmp[1];					//	849		1732,
+				this.arrHr = paTmp[0];
+				this.carrier = paField[8];				//	PS		PS,
+				this.fltNum = paField[9];				//	1451	1454,
+				this.tailNum = paField[10];				//	NA		NA,
+				this.tailNA = (paField[10] == "NA") ? 1 : 0;
+				this.actElap = parseNA(paField[11]);	//	91		NA,
+				this.schElap = +paField[12];			//	79		57,
+				this.airTime = parseNA(paField[13]);	//	NA		NA,
+				this.arrDelay = parseNA(paField[14]);	//	23		NA,
+				this.depDelay = parseNA(paField[15]);	//	11		NA,
+				this.depIATA = paField[16];				//	SAN		OAK,
+				this.arrIATA = paField[17];				//	SFO		BUR,
+				this.distance = parseNA(paField[18]);	//	447		325,
+				this.taxiIn = parseNA(paField[19]);		//	NA		NA,
+				this.taxiOut = parseNA(paField[20]);	//	NA		NA,
+				this.cancelled = +paField[21];			//	0		1,
+				this.canxCode = paField[22];			//	NA		NA,
+				this.diverted = +paField[23];			//	0		0,
+				this.carrDelay = parseNA(paField[24]);	//	NA	--> 0	NA,NA,NA,NA,NA
+				this.WxDelay = parseNA(paField[25]);	//	NA
+				this.NASDelay = parseNA(paField[26]);	//	NA
+				this.SecDelay = parseNA(paField[27]);	//	NA
+				this.lateAC = parseNA(paField[28]);		//	NA
+
+				//	Calculate the week number
+				var psDate = this.year + "-" + ("0" + this.month).slice(-2) + "-" + ("0" + this.day).slice(-2);
+				this.week = new Date(psDate).getWeekNumber();
+				this.jday = new Date(psDate).getJDay();
+			}
+			
+			function loadCarriers() {
+				var goCarriers = goFSO.OpenTextFile("carriers.csv");
+				
+				//	Skip the header
+				var psSkip = goCarriers.readLine();
+				
+				//	Loop through the file
+				while (!goCarriers.AtEndOfStream) {
+					var psLine = goCarriers.readLine();
+					
+					//	psLine = "02Q","Titan Airways"
+					//	Remove the quotes
+					while (psLine.indexOf("\"") >= 0) {
+						psLine = psLine.replace("\"","");
+					}
+					
+					//	Parse the line into an array
+					var paField = psLine.split(",");
+					
+					//	Add the carrier to the collection
+					gaCarrier[paField[0]] = paField[1];
+				}
+				
+				goCarriers.Close();
+			}
+				
+			function processFile(xsFile) {
+				gnFiles++;
+				
+				//	Open the data file
+				var goData = goFSO.OpenTextFile(xsFile);
+				
+				//	Skip the header
+				var psSkip = goData.readLine();
+			
+				//	Loop through the file
+				while (!goData.AtEndOfStream) {
+					var psLine = goData.readLine();
+					
+					gnRecords++;
+				
+					//	psLine = "1987,10,14,3,741,730,912,849,PS,1451,NA,91,79,NA,23,11,SAN,SFO,447,NA,NA,0,NA,0,NA,NA,NA,NA,NA"
+					//	Parse the line into an object
+					var rec = new FltRec(psLine);
+				
+					//	Update the total # of flights
+					goSummary.total.add(rec);
+				
+					//	Do we have this year?
+					if (!goSummary.byYear[rec.year]) {
+						//	Add the year
+						goSummary.byYear[rec.year] = {};
+						goSummary.byYear[rec.year].total = new FltStats(rec.year,rec.year,rec);
+						goSummary.byYear[rec.year].byMonth = {};
+						goSummary.byYear[rec.year].byWeek = {};
+						goSummary.byYear[rec.year].byDay = {};
+						goSummary.byYear[rec.year].byWeekday = {};
+					} else {
+						//	Update the year's stats
+						goSummary.byYear[rec.year].total.add(rec);
+					}
+					
+					//	Do we have this year/month?
+					if (!goSummary.byYear[rec.year].byMonth[rec.month]) {
+						//	Add the month
+						goSummary.byYear[rec.year].byMonth[rec.month] = {};
+						goSummary.byYear[rec.year].byMonth[rec.month].total = new FltStats(rec.month,MonthName(rec.month),rec);
+						goSummary.byYear[rec.year].byMonth[rec.month].byDay = {};
+						goSummary.byYear[rec.year].byMonth[rec.month].byWeekday = {};
+					} else {
+						goSummary.byYear[rec.year].byMonth[rec.month].total.add(rec);
+					}
+					
+					//	Do we have this year/month/day?
+					if (!goSummary.byYear[rec.year].byMonth[rec.month].byDay[rec.day]) {
+						goSummary.byYear[rec.year].byMonth[rec.month].byDay[rec.day] = {};
+						goSummary.byYear[rec.year].byMonth[rec.month].byDay[rec.day].total = new FltStats(rec.day,rec.day,rec);
+					} else {
+						goSummary.byYear[rec.year].byMonth[rec.month].byDay[rec.day].total.add(rec);
+					}
+					
+					//	Do we have this year/month/weekday?
+					if (!goSummary.byYear[rec.year].byMonth[rec.month].byWeekday[rec.weekday]) {
+						goSummary.byYear[rec.year].byMonth[rec.month].byWeekday[rec.weekday] = {};
+						goSummary.byYear[rec.year].byMonth[rec.month].byWeekday[rec.weekday].total = new FltStats(rec.weekday,WeekdayName(rec.weekday),rec);
+					} else {
+						goSummary.byYear[rec.year].byMonth[rec.month].byWeekday[rec.weekday].total.add(rec);
+					}
+
+					//	Do we have this year/day?
+					if (!goSummary.byYear[rec.year].byDay[rec.jday]) {
+						goSummary.byYear[rec.year].byDay[rec.jday] = {};
+						goSummary.byYear[rec.year].byDay[rec.jday].total = new FltStats(rec.jday,rec.jday,rec);
+					} else {
+						goSummary.byYear[rec.year].byDay[rec.jday].total.add(rec);
+					}
+
+					//	Do we have this year/weekday?
+					if (!goSummary.byYear[rec.year].byWeekday[rec.weekday]) {
+						goSummary.byYear[rec.year].byWeekday[rec.weekday] = {};
+						goSummary.byYear[rec.year].byWeekday[rec.weekday].total = new FltStats(rec.weekday,WeekdayName(rec.weekday),rec);
+					} else {
+						goSummary.byYear[rec.year].byWeekday[rec.weekday].total.add(rec);
+					}
+
+					//	Do we have this year/week?
+					if (!goSummary.byYear[rec.year].byWeek[rec.week]) {
+						goSummary.byYear[rec.year].byWeek[rec.week] = {};
+						goSummary.byYear[rec.year].byWeek[rec.week].total = new FltStats(rec.week,rec.week,rec);
+						goSummary.byYear[rec.year].byWeek[rec.week].byWeekday = {};
+					} else {
+						goSummary.byYear[rec.year].byWeek[rec.week].total.add(rec);
+					}
+
+					//	Do we have this year/week/weekday?
+					if (!goSummary.byYear[rec.year].byWeek[rec.week].byWeekday[rec.weekday]) {
+						goSummary.byYear[rec.year].byWeek[rec.week].byWeekday[rec.weekday] = {};
+						goSummary.byYear[rec.year].byWeek[rec.week].byWeekday[rec.weekday].total = new FltStats(rec.weekday,WeekdayName(rec.weekday),rec);
+					} else {
+						goSummary.byYear[rec.year].byWeek[rec.week].byWeekday[rec.weekday].total.add(rec);
+					}
+					
+					//	Do we have this month?
+					if (!goSummary.byMonth[rec.month]) {
+						//	Add the month
+						goSummary.byMonth[rec.month] = {};
+						goSummary.byMonth[rec.month].total = new FltStats(rec.month,MonthName(rec.month),rec);
+						goSummary.byMonth[rec.month].byDay = {};
+						goSummary.byMonth[rec.month].byWeekday = {};
+					} else {
+						//	Update the month's stats
+						goSummary.byMonth[rec.month].total.add(rec);
+					}
+					
+					//	Do we have this month/day?
+					if (!goSummary.byMonth[rec.month].byDay[rec.day]) {
+						//	Add the month/day
+						goSummary.byMonth[rec.month].byDay[rec.day] = {};
+						goSummary.byMonth[rec.month].byDay[rec.day].total = new FltStats(rec.day,rec.day,rec);
+					} else {
+						//	Update the month/day's stats
+						goSummary.byMonth[rec.month].byDay[rec.day].total.add(rec);
+					}
+				
+					//	Do we have this month/weekday?
+					if (!goSummary.byMonth[rec.month].byWeekday[rec.weekday]) {
+						//	Add the month/weekday
+						goSummary.byMonth[rec.month].byWeekday[rec.weekday] = {};
+						goSummary.byMonth[rec.month].byWeekday[rec.weekday].total = new FltStats(rec.weekday,WeekdayName(rec.weekday),rec);
+					} else {
+						//	Update the month/weekday's stats
+						goSummary.byMonth[rec.month].byWeekday[rec.weekday].total.add(rec);
+					}
+					
+					//	Do we have this week?
+					if (!goSummary.byWeek[rec.week]) {
+						//	Add the week
+						goSummary.byWeek[rec.week] = {};
+						goSummary.byWeek[rec.week].total = new FltStats(rec.week,rec.week,rec);
+						goSummary.byWeek[rec.week].byWeekday = {};
+					} else {
+						//	Update the week's stats
+						goSummary.byWeek[rec.week].total.add(rec);
+					}
+				
+					//	Do we have this week/weekday?
+					if (!goSummary.byWeek[rec.week].byWeekday[rec.weekday]) {
+						//	Add the week/weekday
+						goSummary.byWeek[rec.week].byWeekday[rec.weekday] = {};
+						goSummary.byWeek[rec.week].byWeekday[rec.weekday].total = new FltStats(rec.weekday,WeekdayName(rec.weekday),rec);
+					} else {
+						//	Update the week/weekday's stats
+						goSummary.byWeek[rec.week].byWeekday[rec.weekday].total.add(rec);
+					}
+					
+					//	Do we have this weekday?
+					if (!goSummary.byWeekday[rec.weekday]) {
+						//	Add the weekday
+						goSummary.byWeekday[rec.weekday] = {};
+						goSummary.byWeekday[rec.weekday].total = new FltStats(rec.weekday,WeekdayName(rec.weekday),rec);
+						goSummary.byWeekday[rec.weekday].byHour = {};
+					} else {
+						//	Update the weekday's stats
+						goSummary.byWeekday[rec.weekday].total.add(rec);
+					}
+					
+					//	Do we have this weekday/hour?
+					if (!goSummary.byWeekday[rec.weekday].byHour[rec.arrHr]) {
+						goSummary.byWeekday[rec.weekday].byHour[rec.arrHr] = {};
+						goSummary.byWeekday[rec.weekday].byHour[rec.arrHr].total = new FltStats(rec.arrHr,rec.arrHr,rec);
+					} else {
+						goSummary.byWeekday[rec.weekday].byHour[rec.arrHr].total.add(rec);
+					}
+
+					//	Do we have this day of year?
+					if (!goSummary.byDay[rec.jday]) {
+						//	Add the day
+						goSummary.byDay[rec.jday] = {};
+						goSummary.byDay[rec.jday].total = new FltStats(rec.jday,rec.jday,rec);
+					} else {
+						//	Update the day's stats
+						goSummary.byDay[rec.jday].total.add(rec);
+					}
+
+					//	Do we have this day of month?
+					if (!goSummary.byDate[rec.day]) {
+						//	Add the day
+						goSummary.byDate[rec.day] = {};
+						goSummary.byDate[rec.day].total = new FltStats(rec.day,rec.day,rec);
+					} else {
+						//	Update the day's stats
+						goSummary.byDate[rec.day].total.add(rec);
+					}
+
+					//	Do we have this Hour?
+					if (!goSummary.byHour[rec.arrHr]) {
+						//	Add the hour
+						goSummary.byHour[rec.arrHr] = {};
+						goSummary.byHour[rec.arrHr].total = new FltStats(rec.arrHr,rec.arrHr,rec);
+					} else {
+						//	Update the hour's stats
+						goSummary.byHour[rec.arrHr].total.add(rec);
+					}
+/*
+					//	Do we have this Route?
+					var psRoute = rec.depIATA + "-" + rec.arrIATA;
+					if (!goSummary.byRoute[psRoute]) {
+						//	Add the route
+						goSummary.byRoute[psRoute] = {};
+						goSummary.byRoute[psRoute].total = new FltStats(psRoute,psRoute,rec);
+					} else {
+						//	Update the route's stats
+						goSummary.byRoute[psRoute].total.add(rec);
+					}
+*/
+					//	Do we have this carrier?
+					if (!goSummary.byCarrier[rec.carrier]) {
+						goSummary.byCarrier[rec.carrier] = {};
+						goSummary.byCarrier[rec.carrier].total = new FltStats(rec.carrier,gaCarrier[rec.carrier],rec);
+						goSummary.byCarrier[rec.carrier].byYear = {};
+						goSummary.byCarrier[rec.carrier].byMonth = {};
+						goSummary.byCarrier[rec.carrier].byDay = {};
+						goSummary.byCarrier[rec.carrier].byDate = {};
+						goSummary.byCarrier[rec.carrier].byWeekday = {};
+					} else {
+						goSummary.byCarrier[rec.carrier].total.add(rec);
+					}
+					
+					//	Do we have this carrier/year?
+					if (!goSummary.byCarrier[rec.carrier].byYear[rec.year]) {
+						goSummary.byCarrier[rec.carrier].byYear[rec.year] = {};
+						goSummary.byCarrier[rec.carrier].byYear[rec.year].total = new FltStats(rec.year, rec.year, rec);
+						goSummary.byCarrier[rec.carrier].byYear[rec.year].byMonth = {};
+					} else {
+						goSummary.byCarrier[rec.carrier].byYear[rec.year].total.add(rec);
+					}
+					
+					//	Do we have this carrier/year/month?
+					if (!goSummary.byCarrier[rec.carrier].byYear[rec.year].byMonth[rec.month]) {
+						goSummary.byCarrier[rec.carrier].byYear[rec.year].byMonth[rec.month] = {};
+						goSummary.byCarrier[rec.carrier].byYear[rec.year].byMonth[rec.month].total = new FltStats(rec.month, MonthName(rec.month),rec);
+					} else {
+						goSummary.byCarrier[rec.carrier].byYear[rec.year].byMonth[rec.month].total.add(rec);
+					}
+					
+					//	Do we have this carrier/month?
+					if (!goSummary.byCarrier[rec.carrier].byMonth[rec.month]) {
+						goSummary.byCarrier[rec.carrier].byMonth[rec.month] = {};
+						goSummary.byCarrier[rec.carrier].byMonth[rec.month].total = new FltStats(rec.month, MonthName(rec.month), rec);
+						goSummary.byCarrier[rec.carrier].byMonth[rec.month].byDate = {};
+					} else {
+						goSummary.byCarrier[rec.carrier].byMonth[rec.month].total.add(rec);
+					}
+					
+					//	Do we have this carrier/month/date?
+					if (!goSummary.byCarrier[rec.carrier].byMonth[rec.month].byDate[rec.day]) {
+						goSummary.byCarrier[rec.carrier].byMonth[rec.month].byDate[rec.day] = {};
+						goSummary.byCarrier[rec.carrier].byMonth[rec.month].byDate[rec.day].total = new FltStats(rec.day,rec.day,rec);
+					} else {
+						goSummary.byCarrier[rec.carrier].byMonth[rec.month].byDate[rec.day].total.add(rec);
+					}
+					
+					//	Do we have this carrier/day?
+					if (!goSummary.byCarrier[rec.carrier].byDay[rec.jday]) {
+						goSummary.byCarrier[rec.carrier].byDay[rec.jday] = {};
+						goSummary.byCarrier[rec.carrier].byDay[rec.jday].total = new FltStats(rec.jday, rec.jday, rec);
+					} else {
+						goSummary.byCarrier[rec.carrier].byDay[rec.jday].total.add(rec);
+					}
+
+					//	Do we have this carrier/date?
+					if (!goSummary.byCarrier[rec.carrier].byDate[rec.day]) {
+						goSummary.byCarrier[rec.carrier].byDate[rec.day] = {};
+						goSummary.byCarrier[rec.carrier].byDate[rec.day].total = new FltStats(rec.day, rec.day, rec);
+					} else {
+						goSummary.byCarrier[rec.carrier].byDate[rec.day].total.add(rec);
+					}
+					
+					//	Do we have this carrier/weekday?
+					if (!goSummary.byCarrier[rec.carrier].byWeekday[rec.weekday]) {
+						goSummary.byCarrier[rec.carrier].byWeekday[rec.weekday] = {};
+						goSummary.byCarrier[rec.carrier].byWeekday[rec.weekday].total = new FltStats(rec.weekday,WeekdayName(rec.weekday),rec);
+					} else {
+						goSummary.byCarrier[rec.carrier].byWeekday[rec.weekday].total.add(rec);
+					}
+				}
+			}
+			/*
+				1 Year 1987-2008
+				2 Month 1-12
+				3 DayofMonth 1-31
+				4 DayOfWeek 1 (Monday) - 7 (Sunday)
+				5 DepTime actual departure time (local, hhmm)
+				6 CRSDepTime scheduled departure time (local, hhmm)
+				7 ArrTime actual arrival time (local, hhmm)
+				8 CRSArrTime scheduled arrival time (local, hhmm)
+				9 UniqueCarrier unique carrier code
+				10 FlightNum flight number
+				11 TailNum plane tail number
+				12 ActualElapsedTime in minutes
+				13 CRSElapsedTime in minutes
+				14 AirTime in minutes
+				15 ArrDelay arrival delay, in minutes
+				16 DepDelay departure delay, in minutes
+				17 Origin origin IATA airport code
+				18 Dest destination IATA airport code
+				19 Distance in miles
+				20 TaxiIn taxi in time, in minutes
+				21 TaxiOut taxi out time in minutes
+				22 Cancelled was the flight cancelled?
+				23 CancellationCode reason for cancellation (A = carrier, B = weather, C = NAS, D = security)
+				24 Diverted 1 = yes, 0 = no
+				25 CarrierDelay in minutes
+				26 WeatherDelay in minutes
+				27 NASDelay in minutes
+				28 SecurityDelay in minutes
+				29 LateAircraftDelay in minutes	
+			*/
+
+			if (gbRedo) {
+				loadCarriers();
+				
+				goSummary = {};
+				goSummary.total = new FltStats(0,"Total");
+				goSummary.byYear = {};
+				goSummary.byMonth = {};
+				goSummary.byWeek = {};
+				goSummary.byDay = {};
+				goSummary.byDate = {};
+				goSummary.byWeekday = {};
+				goSummary.byHour = {};
+				goSummary.byRoute = {};
+				goSummary.byCarrier = {};
+
+				gaYears.forEach(function(Yr) {
+					processFile(Yr + ".csv");
+				});
+				
+				var outputFile = goFSO.CreateTextFile("QTW14.json");
+				outputFile.write(JSON.stringify(goSummary));
+				outputFile.close();
+				//alert("Processed " + gnRecords + " records from " + gnFiles + " files");
+			} else {
+				var JSONfile = goFSO.OpenTextFile("QTW14.json");
+				goSummary = JSON.parse(JSONfile.readAll());
+			}
+			Q3();
+			Q4();
+			Q5();
+			Q6();
+			Q7A();
+			Q7B();
+			Q7C();
+			Q7D();
+			Q7E();
+			Q7F();
+			Q7G();
+			Q7H();
+			Q8();
+			Q9();
+			Q10();
+			Q10B();
+			Q14();
+			Q14B();
+			QCarrier();
+
+			//	Converts x,y shapes into a linear path object for SVG
+			var markerDraw = d3.line()
+				.x(function(d) { return d.x;})
+				.y(function(d) { return d.y;})
+			;
+			
+			//	Function to draw bar chart
+			function BarChart(xoSVG, xaValues, xaLabels, xaGridlines, xaValueLbl, xdWidth, fnHeight, xoBarColor, xoLabelColor, xoGridColor, xoValueColor, xsBarClass, xsValueClass) {
+				ChartBars(xoSVG,xaValues,xdWidth,fnHeight,xoBarColor,xsBarClass);
+				if (xaGridlines) {
+					HorzGrid(xoSVG,xaGridlines,fnHeight,xoGridColor);
+					BarYLabels(xoSVG,xaGridlines,fnHeight,xoLabelColor,false);
+				}
+				if (xaLabels) {
+					BarXLabels(xoSVG,xaLabels,xdWidth,xoLabelColor);
+				}
+				BarValueLabel(xoSVG,xaValues,xdWidth,fnHeight,xoValueColor,true, xsValueClass);
+			}
+
+			//	Function to draw bars
+			function ChartBars(xoSVG, xaValues, xdWidth, fnHeight, xoBarColor, xsBarClass) {
+				xoSVG.selectAll("rect." + xsBarClass)
+					.data(xaValues)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return 50 + (i*xdWidth) + (0.05*xdWidth);})
+						.attr("y",function(d,i){return 475 - fnHeight(d,i);})
+						.attr("width",0.9 * xdWidth)
+						.attr("height",function(d){return fnHeight(d);})
+						.style("fill",xoBarColor)
+						.attr("class",xsBarClass)
+				;
+			}
+			
+			//	Function to draw horizontal gridlines
+			function HorzGrid(xoSVG, xaLines, fnYScale, xoColor) {
+				xoSVG.selectAll("line.hgrid")
+					.data(xaLines)
+					.enter()
+					.append("line")
+						.attr("x1",45)
+						.attr("x2",500)
+						.attr("y1",function(d){return 475 - fnYScale(d);})
+						.attr("y2",function(d){return 475 - fnYScale(d);})
+						.style("stroke",xoColor)
+						.attr("class","hgrid")
+				;
+			}
+
+			//	Function to write x-axis labels
+			function BarXLabels(xoSVG,xaLabels,xdWidth,xoColor) {
+				xoSVG.selectAll("text.x-lbl")
+					.data(xaLabels)
+					.enter()
+					.append("text")
+						.attr("x",function(d,i){return 50 + (i*xdWidth) + (0.05*xdWidth) + (xdWidth/2);})
+						.attr("y",490)
+						.text(function(d){return d;})
+						.style("text-anchor","middle")
+						.style("fill",xoColor)
+						.attr("class","x-lbl")
+				;
+			}
+			//	Function to write y-axis labels
+			function BarYLabels(xoSVG,xaLabels,fnYScale,xoColor,xbVertical) {
+				xoSVG.selectAll("text.y-lbl")
+					.data(xaLabels)
+					.enter()
+					.append("text")
+						//.attr("x",5)
+						//.attr("y",function(d){return 480 - Q3height(d);})
+						.attr("transform",function(d,i){return "translate(" + ((xbVertical) ? 20 : 5) + "," + (480 - fnYScale(d)) + ") rotate(" + ((xbVertical) ? 90 : 0) + ")";})
+						.text(function(d){return Math.round(d / 1e4)/100 + "M";})
+						.style("fill",xoColor)
+						.attr("class","y-lbl")
+				;
+			}
+			
+			//	Function to write actual value in bar
+			function BarValueLabel(xoSVG,xaValues,xdWidth,fnYScale,xoColor,xbVertical, xsValueClass) {
+				xoSVG.selectAll("text." + xsValueClass)
+					.data(xaValues)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (40 + (i*xdWidth) + (0.05*xdWidth) + (xdWidth/2)) + "," + (470 - fnYScale(d)/2) + ") rotate(90)";})
+						.text(function(d){return d;})
+						.style("text-anchor","middle")
+						.style("stroke",xoColor)
+						.style("fill",xoColor)
+						.attr("class",xsValueClass)
+				;
+			}
+
+			function Heatmap(xoSVG, xaData, xaColLabels, xaRowLabels,xoLblColor,xaTileValues,xoValueColor) {
+				var tileWidth = 450 / xaColLabels.length;
+				var tileHeight = 450 / xaRowLabels.length;
+				var minCount = d3.min(xaData,function(d){return d.count;});
+				var maxCount = d3.max(xaData,function(d){return d.count;});
+				
+				var colorScale = d3.scaleLinear()
+					.domain([minCount,(maxCount-minCount)/7,(maxCount-minCount)*2/7,(maxCount-minCount)*3/7,(maxCount-minCount)*4/7,(maxCount-minCount)*5/7,(maxCount-minCount)*6/7,maxCount])
+					.range(["#8844FF","#0000FF","#00FFFF","#00FF00","#FFFF00","#FF0000","#FF00FF","#FFFFFF"]);
+				
+				xoSVG.selectAll("rect")
+					.data(xaData)
+					.enter()
+					.append("rect")
+						.attr("x",function(d){return 50 + (d.x * tileWidth);})
+						.attr("y",function(d){return (d.y * tileHeight);})
+						.attr("width",tileWidth)
+						.attr("height",tileHeight)
+						.style("fill",function(d){return colorScale(d.count);})
+				;
+				xoSVG.selectAll("text.tile-text")
+					.data(xaData)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (45 + (d.x*tileWidth) + (tileWidth/2)) + "," + ((d.y*tileHeight) + (tileHeight/2)) + ") rotate(90)";})
+						.text(function(d,i){return (xaTileValues) ? xaTileValues[i] : d.count;})
+						.style("fill",xoValueColor)
+						.attr("text-anchor","middle")
+						.attr("class","tile-text")
+				;
+				xoSVG.selectAll("text.y-lbl")
+					.data(xaRowLabels)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + 20 + "," + ((i * tileHeight) + (tileHeight/2)) + ") rotate(" + 90 + ")";})
+						.text(function(d) {return d;})
+						.style("fill", xoLblColor)
+						.attr("text-anchor","middle")
+						.attr("class","y-lbl")
+				;
+				xoSVG.selectAll("text.x-lbl")
+					.data(xaColLabels)
+					.enter()
+					.append("text")
+						.attr("y",490)
+						.attr("x",function(d,i){return 50 + (i * tileWidth) + (tileWidth/2);})
+						.text(function(d){return d;})
+						.style("fill",xoLblColor)
+						.attr("text-anchor","middle")
+						.attr("class","x-lbl")
+				;
+			}
+			/*
+				Q2 : Write a pre-processing script to create a file compatible with bigmemory.
+					* Read all CSV files, convert numeric fields to signed longs (4-bytes), map text values to longs and maintain map
+					* Create index file
+				Q3 : How many flights per day of week
+					* Object: { Monday: total # of Mondays, total # of monday flights, --> average # of monday flights, std dev monday flights, min, max
+								}
+				Q4 : For each year, how many flights per day of week
+					* Heatmap:	x = year, y = day of week
+					* Keep track of max
+				Q5 : For each year, how many tail numbers are "NA"
+					* 
+				Q6 : Which year had greatest proportion of late flights
+					*	Year: total flights, num late, proportion = num late/total
+					* 	Sort highest --> smallest
+					*	ANOVA: is highest significantly different
+				Q7 : Which flight day is best for minimizing delay; which hour?
+				Q8 : Which is the best day of the week to fly?
+				Q9 : Which is the best day of the month to fly?
+				Q10 : Are flights being given more time to reach destination in later years?
+				Q11 : Which departure/arrival combo is worst?
+				Q13 : How many of the planes ages are censored?
+				Q14 : How much does weather delay contribute to arrival delay
+				Q15 : Which other variables contribute to arrival delay?
+			*/
+		
+			/*** Q3 - How many flights per day of week
+				Our JSON summary has the counts of flights per weekday, so we simply turn that into a bar chart
+			***/
+			function Q3() {
+				var Q3counts = [];
+				var Q3labels = [];
+
+				var Q3 = d3.select("#divQ3").append("svg")
+					.attr("width","100%")
+					.attr("height","100%")
+				;
+
+				for (psWeekday in goSummary.byWeekday) {
+					Q3counts.push(goSummary.byWeekday[psWeekday].total.flights);
+					Q3labels.push(goSummary.byWeekday[psWeekday].total.label.slice(0,3));
+				}
+				var Q3max = Math.ceil(d3.max(Q3counts,function(d){return d;}) / 1e6) * 1e6;
+				var Q3min = Math.floor(d3.min(Q3counts,function(d){return d;}) / 1e6) * 1e6;
+				var Q3width = (500 - 50)/7;
+				var Q3height = d3.scaleLinear()
+					.domain([Q3min,Q3max])
+					.range([0,475])
+				;
+				var Q3lines = [];
+				var Q3gridVal = [];
+				for (pnScale = 0; pnScale < 5; pnScale++) {
+					var pdVal = Q3min + (Q3max - Q3min) * pnScale / 5.0;
+					Q3lines.push(pdVal);
+					Q3gridVal.push(Math.round(pdVal / 1e4) / 100 + "M");
+				}
+				BarChart(Q3, Q3counts, Q3labels, Q3lines, Q3gridVal, Q3width, Q3height, "#99CCAA", "#FFFF00", "#999999", "#000000",	"bar", "flights");
+				
+				Q3.selectAll("path.airplane")
+					.data(Q3counts)
+					.enter()
+					.append("path")
+						.attr("d", bodyDraw(airliner))
+						.attr("stroke","black")
+						.attr("stroke-width",1)
+						.attr("fill","silver")
+						.attr("class","airplane")
+						.attr("transform",function(d,i){return "translate(" + (50 + (i*Q3width) + (Q3width/2)) + "," + (475 - Q3height(d)) + ") rotate(" + 180 + ") scale(1,1)";})
+				;
+
+			}
+			
+			/*** Q4 - For each year, how many flights per week day
+				Our JSON object tracks years, and weekdays per year, so we can turn that into a heatmap
+			***/
+			function Q4() {
+				var Q4 = d3.select("#divQ4").append("svg")
+					.attr("width","100%")
+					.attr("height","100%")
+				;
+				var Q4data = [];
+				var Q4years = [];
+				var Q4wkdy = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+				var Q4vals = [];
+				var rec = {}
+				//var Q4numYr = 0
+				for (psYr in goSummary.byYear) {
+					//Q4numYr++;
+					Q4years.push(psYr.slice(-2));
+					for (psWkdy in goSummary.byYear[psYr].byWeekday) {
+						rec = {"key":psYr + ":" + psWkdy, "x": +psYr - 1987, "y": +psWkdy - 1, "count": goSummary.byYear[psYr].byWeekday[psWkdy].total.flights};
+						Q4data.push(rec);
+						Q4vals.push(Math.round(rec.count / 1e4)/100 + " M");
+					}
+				}
+				
+				Heatmap(Q4, Q4data, Q4years, Q4wkdy,"gold",Q4vals,"black");
+			}
+		
+			/*** Q5 - For each year, how many tail numbers are "NA"
+				Our JSON summary maintains totals for each year, so we can generate a bar chart
+			***/
+			function Q5() {
+				var Q5 = d3.select("#divQ5").append("svg")
+					.attr("width","100%")
+					.attr("height","100%")
+				;
+
+				var Q5counts = [];
+				var Q5labels = [];
+
+				for (psYr in goSummary.byYear) {
+					Q5counts.push(goSummary.byYear[psYr].total.numTailNA);
+					Q5labels.push(psYr.slice(-2));
+				}
+				var Q5max = Math.ceil(d3.max(Q5counts,function(d){return d;})/1e6)*1e6;
+				var Q5width = 450/Q5labels.length;
+				var Q5height = d3.scaleLinear()
+					.domain([0,Q5max])
+					.range([0,475])
+				;
+				var Q5lines = [];
+				var Q5gridVal = [];
+				for (pnScale = 0; pnScale < 5; pnScale++) {
+					var pdVal = Q5max * pnScale / 5.0;
+					Q5lines.push(pdVal);
+					Q5gridVal.push(Math.round(pdVal / 1e4) / 100 + "M");
+				}
+
+				BarChart(Q5, Q5counts, Q5labels, Q5lines, Q5gridVal, Q5width, Q5height, "silver", "yellow", "gray", "black", "bar", "NA");
+				
+			}
+			
+			/*** Q6 - Which year had the greatest proportion of late flights
+				ontime = early - late
+				early
+				late
+			***/
+			function Q6() {
+				var Q6 = d3.select("#divQ6").append("svg")
+					.attr("width","100%")
+					.attr("height","100%")
+				;
+
+				var Q6onTime = [];
+				var Q6early = [];
+				var Q6late = [];
+				var Q6labels = [];
+
+				for (psYr in goSummary.byYear) {
+					Q6early.push(goSummary.byYear[psYr].total.numEarlyArrive / goSummary.byYear[psYr].total.flights);
+					Q6late.push(goSummary.byYear[psYr].total.numLateArrive / goSummary.byYear[psYr].total.flights);
+					Q6onTime.push((goSummary.byYear[psYr].total.flights - goSummary.byYear[psYr].total.numEarlyArrive - goSummary.byYear[psYr].total.numLateArrive)/goSummary.byYear[psYr].total.flights);
+					Q6labels.push(psYr);
+				}
+				
+				var Q6width = 450/Q6labels.length;
+				var Q6height = d3.scaleLinear()
+					.domain([0,1])
+					.range([0,475])
+				;
+				var Q6lines = [];
+				var Q6gridVal = [];
+				for (pnPct = 0; pnPct < .9; pnPct += 0.1) {
+					Q6lines.push(pnPct);
+					Q6gridVal.push((pnPct * 100) + "%");
+				}
+
+				Q6.selectAll("rect.late")
+					.data(Q6late)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return 50 + (i*Q6width) + (0.05*Q6width);})
+						.attr("y",function(d){return 475 - Q6height(d);})
+						.attr("width",0.9 * Q6width)
+						.attr("height",function(d){return Q6height(d);})
+						.style("fill","#FF0000")
+						.attr("class","late")
+				;
+				Q6.selectAll("rect.early")
+					.data(Q6early)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return 50 + (i*Q6width) + (0.05*Q6width);})
+						.attr("y",function(d,i){return 475 - Q6height(d) - Q6height(Q6late[i]);})
+						.attr("width",0.9 * Q6width)
+						.attr("height",function(d){return Q6height(d);})
+						.style("fill","#00FF00")
+						.attr("class","early")
+				;
+				Q6.selectAll("rect.onTime")
+					.data(Q6onTime)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return 50 + (i*Q6width) + (0.05*Q6width);})
+						.attr("y",function(d,i){return 475 - Q6height(d) - Q6height(Q6late[i]) - Q6height(Q6early[i]);})
+						.attr("width",0.9 * Q6width)
+						.attr("height",function(d){return Q6height(d);})
+						.style("fill","#00FFFF")
+						.attr("class","onTime")
+				;
+				Q6.selectAll("line")
+					.data(Q6lines)
+					.enter()
+					.append("line")
+						.attr("x1",45)
+						.attr("x2",500)
+						.attr("y1",function(d){return 475 - Q6height(d);})
+						.attr("y2",function(d){return 475 - Q6height(d);})
+						.style("stroke","#999999")
+				;
+				Q6.selectAll("text.y")
+					.data(Q6lines)
+					.enter()
+					.append("text")
+						.attr("x",5)
+						.attr("y",function(d){return 480 - Q6height(d);})
+						.text(function(d){return Math.round(d * 100) + "%";})
+						.style("fill","#FFFF00")
+						.attr("class","y")
+					;
+				Q6.selectAll("text.x")
+					.data(Q6labels)
+					.enter()
+					.append("text")
+						.attr("x",function(d,i){return 50 + (i*Q6width) + (0.05*Q6width) + (Q6width/2);})
+						.attr("y",490)
+						.text(function(d){return d.slice(-2);})
+						.style("text-anchor","middle")
+						.style("fill","#FFFF00")
+						.attr("class","x")
+					;
+				Q6.selectAll("text.bar-value.late")
+					.data(Q6late)
+					.enter()
+					.append("text")
+						//.attr("x",function(d,i){return 50 + (i*Q6width) + (0.05*Q6width) + (Q6width/2);})
+						//.attr("y",function(d){return 470 - Q6height(d) + (Q6height(d)/2);})
+						.attr("transform",function(d,i){return "translate(" + (43 + (i*Q6width) + (0.05*Q6width) + (Q6width/2)) + "," + (470 - Q6height(d)/2) + ") rotate(90)";})
+						.text(function(d){return (Math.round(d*1000)/10) + "%";})
+						.style("text-anchor","middle")
+						.style("fill","#000000")
+						.attr("class","bar-value late")
+				;
+				Q6.selectAll("text.bar-value.early")
+					.data(Q6early)
+					.enter()
+					.append("text")
+						//.attr("x",function(d,i){return 50 + (i*Q6width) + (0.05*Q6width) + (Q6width/2);})
+						//.attr("y",function(d){return 470 - Q6height(d) + (Q6height(d)/2);})
+						.attr("transform",function(d,i){return "translate(" + (43 + (i*Q6width) + (0.05*Q6width) + (Q6width/2)) + "," + (470 - Q6height(Q6late[i]) - Q6height(d)/2) + ") rotate(90)";})
+						.text(function(d){return (Math.round(d*1000)/10) + "%";})
+						.style("text-anchor","middle")
+						.style("fill","#000000")
+						.attr("class","bar-value early")
+				;
+				Q6.selectAll("text.bar-value.onTime")
+					.data(Q6onTime)
+					.enter()
+					.append("text")
+						//.attr("x",function(d,i){return 50 + (i*Q6width) + (0.05*Q6width) + (Q6width/2);})
+						//.attr("y",function(d){return 470 - Q6height(d) + (Q6height(d)/2);})
+						.attr("transform",function(d,i){return "translate(" + (45 + (i*Q6width) + (0.05*Q6width) + (Q6width/2)) + "," + (472 - Q6height(Q6early[i]) - Q6height(Q6late[i])) + ") rotate(90)";})
+						.text(function(d){return (Math.round(d*1000)/10) + "%";})
+						.style("text-anchor","end")
+						.style("fill","#000000")
+						.style("font-size","8pt")
+						.attr("class","bar-value onTime")
+				;
+			}
+		
+			/*** Q7 : Which flight day is best for minimizing delay; which hour?
+				They don't specify the resolution for "flight day" or "delay"
+				 - day of year (1-360) by avg Arrival delay (with conf interval)
+				 - day of year (1-360) by avg Departure delay
+				 - day of month (1-31)
+				 - day of week (1-7)
+				 - hour (0-23)
+			***/
+			function Q7A() {
+				var Q7A = d3.select("#divQ7A").append("svg")
+					.attr("width","100%")
+					.attr("height","100%")
+				;
+				var Q7delay = [];
+				var Q7jday = [];
+				var Q7conf = [];
+				
+				for (psJDay in goSummary.byDay) {
+					Q7jday.push(psJDay);
+					Q7delay.push(Mean(goSummary.byDay[psJDay].total.arrivalDelay));
+					Q7conf.push(ConfMean(goSummary.byDay[psJDay].total.arrivalDelay));
+				}
+				var Q7min = Math.floor(d3.min(Q7delay,function(d){return d}));
+				var Q7max = Math.ceil(d3.max(Q7delay,function(d){return d}));
+				var Q7x = d3.scaleLinear()
+					.domain([1,366])
+					.range([50,495])
+				;
+				var Q7y = d3.scaleLinear()
+					.domain([Q7min,Q7max])
+					.range([450,5])
+				;
+
+				var Q7xLbl = [10,20,30,40,50,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200,210,220,230,240,250,260,270,280,290,300,310,320,330,340,350,360];
+				Q7A.selectAll("text.x-lbl")
+					.data(Q7xLbl)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (Q7x(d) - 5) + "," + 480 + ") rotate(90)";})
+						.text(function(d){return d;})
+						.style("fill","gold")
+						.style("text-anchor","middle")
+						.style("font-size","10pt")
+						.attr("class","x-lbl")
+				;
+				Q7A.selectAll("line.x-grid")
+					.data(Q7xLbl)
+					.enter()
+					.append("line")
+						.attr("x1",function(d){return Q7x(d);})
+						.attr("x2",function(d){return Q7x(d);})
+						.attr("y1",0)
+						.attr("y2",460)
+						.style("stroke","silver")
+						.attr("class","x-grid")
+				;
+				var Q7yLbl = [];
+				if (0 > Q7min) {Q7yLbl.push(0);}
+				for (pdPct=0; pdPct < 1; pdPct+=0.2) {
+					Q7yLbl.push(Q7min + (Q7max-Q7min)*pdPct);
+				}
+				Q7A.selectAll("text.y-lbl")
+					.data(Q7yLbl)
+					.enter()
+					.append("text")
+						.attr("x",5)
+						.attr("y",function(d){return Q7y(d)+5;})
+						.text(function(d){return (Math.round(d * 10)/10) + "m";})
+						.style("fill","gold")
+				;
+				Q7A.selectAll("line.grid")
+					.data(Q7yLbl)
+					.enter()
+					.append("line")
+						.attr("x1",45)
+						.attr("x2",500)
+						.attr("y1",function(d){return Q7y(d);})
+						.attr("y2",function(d){return Q7y(d);})
+						.style("stroke","silver")
+				;
+				if (0 > Q7min) {
+					Q7A.append("line")
+						.attr("x1",40)
+						.attr("x2",500)
+						.attr("y1",Q7y(0))
+						.attr("y2",Q7y(0))
+						.style("stroke","black")
+						.style("stroke-width",2)
+					;
+				}
+							
+				Q7A.selectAll("line.conf")
+					.data(Q7conf)
+					.enter()
+					.append("line")
+						.attr("x1",function(d,i){return Q7x(+Q7jday[i]);})
+						.attr("y1",function(d,i){return Q7y(d[1]);})
+						.attr("x2",function(d,i){return Q7x(+Q7jday[i]);})
+						.attr("y2",function(d,i){return Q7y(d[0]);})
+						.style("stroke","orange")
+						.style("stroke-width",2)
+						.attr("class","conf")
+					;
+				Q7A.selectAll("circle.arrival")
+					.data(Q7delay)
+					.enter()
+					.append("circle")
+						.attr("cx",function(d,i){return Q7x(+Q7jday[i]);})
+						.attr("cy",function(d,i){return Q7y(d);})
+						.attr("r",5)
+						.attr("fill","red")
+				;
+			}
+			function Q7B() {
+				// 7B
+				var Q7B = d3.select("#divQ7B").append("svg")
+					.attr("width","100%")
+					.attr("height","100%")
+				;
+				var Q7delay = [];
+				var Q7jday = [];
+				var Q7conf = [];
+				
+				for (psJDay in goSummary.byDay) {
+					Q7jday.push(psJDay);
+					Q7delay.push(Mean(goSummary.byDay[psJDay].total.departureDelay));
+					Q7conf.push(ConfMean(goSummary.byDay[psJDay].total.departureDelay));
+				}
+				var Q7min = Math.min(0,d3.min(Q7delay,function(d){return d}));
+				var Q7max = Math.ceil(d3.max(Q7delay,function(d){return d}));
+				var Q7x = d3.scaleLinear()
+					.domain([1,366])
+					.range([60,490])
+				;
+				var Q7y = d3.scaleLinear()
+					.domain([Q7min,Q7max])
+					.range([450,5])
+				;
+				var Q7xLbl = [10,20,30,40,50,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200,210,220,230,240,250,260,270,280,290,300,310,320,330,340,350,360];
+				Q7B.selectAll("text.x-lbl")
+					.data(Q7xLbl)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (Q7x(d) - 5) + "," + 480 + ") rotate(90)";})
+						.text(function(d){return d;})
+						.style("fill","gold")
+						.style("text-anchor","middle")
+						.style("font-size","10pt")
+						.attr("class","x-lbl")
+				;
+				Q7B.selectAll("line.x-grid")
+					.data(Q7xLbl)
+					.enter()
+					.append("line")
+						.attr("x1",function(d){return Q7x(d);})
+						.attr("x2",function(d){return Q7x(d);})
+						.attr("y1",0)
+						.attr("y2",460)
+						.style("stroke","silver")
+						.attr("class","x-grid")
+				;
+				var Q7yLbl = [];
+				if (0 > Q7min) {Q7yLbl.push(0);}
+				for (pdPct=0; pdPct < 1; pdPct+=0.2) {
+					Q7yLbl.push(Q7min + (Q7max-Q7min)*pdPct);
+				}
+				Q7B.selectAll("text.y-lbl")
+					.data(Q7yLbl)
+					.enter()
+					.append("text")
+						.attr("x",5)
+						.attr("y",function(d){return Q7y(d)+5;})
+						.text(function(d){return (Math.round(d * 10)/10) + "m";})
+						.style("fill","gold")
+				;
+				Q7B.selectAll("line.grid")
+					.data(Q7yLbl)
+					.enter()
+					.append("line")
+						.attr("x1",45)
+						.attr("x2",500)
+						.attr("y1",function(d){return Q7y(d);})
+						.attr("y2",function(d){return Q7y(d);})
+						.style("stroke","silver")
+				;
+				if (0 > Q7min) {
+					Q7B.append("line")
+						.attr("x1",40)
+						.attr("x2",500)
+						.attr("y1",Q7y(0))
+						.attr("y2",Q7y(0))
+						.style("stroke","black")
+						.style("stroke-width",2)
+					;
+				}
+				Q7B.selectAll("line.conf")
+					.data(Q7conf)
+					.enter()
+					.append("line")
+						.attr("x1",function(d,i){return Q7x(+Q7jday[i]);})
+						.attr("y1",function(d,i){return Q7y(d[1]);})
+						.attr("x2",function(d,i){return Q7x(+Q7jday[i]);})
+						.attr("y2",function(d,i){return Q7y(d[0]);})
+						.style("stroke","orange")
+						.style("stroke-width",2)
+						.attr("class","conf")
+					;
+				Q7B.selectAll("circle.depart")
+					.data(Q7delay)
+					.enter()
+					.append("circle")
+						.attr("cx",function(d,i){return Q7x(+Q7jday[i]);})
+						.attr("cy",function(d,i){return Q7y(d);})
+						.attr("r",5)
+						.attr("fill","yellow")
+				;
+			}
+			function Q7C() {
+
+				//	7C
+				var Q7C = d3.select("#divQ7C").append("svg")
+					.attr("width","100%")
+					.attr("height","100%")
+				;
+				var Q7delay = [];
+				var Q7date = [];
+				var Q7conf = [];
+				
+				for (psDate in goSummary.byDate) {
+					Q7date.push(+psDate);
+					Q7delay.push(Mean(goSummary.byDate[psDate].total.arrivalDelay));
+					Q7conf.push(ConfMean(goSummary.byDate[psDate].total.arrivalDelay));
+				}
+				var Q7min = Math.min(0,d3.min(Q7delay,function(d){return d}));
+				var Q7max = Math.ceil(d3.max(Q7delay,function(d){return d}));
+				var Q7x = d3.scaleLinear()
+					.domain([1,31])
+					.range([60,490])
+				;
+				var Q7y = d3.scaleLinear()
+					.domain([Q7min,Q7max])
+					.range([450,5])
+				;
+				Q7C.selectAll("text.x-lbl")
+					.data(Q7date)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (Q7x(+d) - 5) + "," + 480 + ") rotate(90)";})
+						.text(function(d){return d;})
+						.style("fill","gold")
+						.style("text-anchor","middle")
+						.style("font-size","10pt")
+						.attr("class","x-lbl")
+				;
+				var Q7yLbl = [];
+				if (0 > Q7min) {Q7yLbl.push(0);}
+				for (pdPct=0; pdPct < 1; pdPct+=0.2) {
+					Q7yLbl.push(Q7min + (Q7max-Q7min)*pdPct);
+				}
+				Q7C.selectAll("text.y-lbl")
+					.data(Q7yLbl)
+					.enter()
+					.append("text")
+						.attr("x",5)
+						.attr("y",function(d){return Q7y(d)+5;})
+						.text(function(d){return (Math.round(d * 10)/10) + "m";})
+						.style("fill","gold")
+				;
+				Q7C.selectAll("line.grid")
+					.data(Q7yLbl)
+					.enter()
+					.append("line")
+						.attr("x1",45)
+						.attr("x2",500)
+						.attr("y1",function(d){return Q7y(d);})
+						.attr("y2",function(d){return Q7y(d);})
+						.style("stroke","silver")
+				;
+				if (0 > Q7min) {
+					Q7C.append("line")
+						.attr("x1",40)
+						.attr("x2",500)
+						.attr("y1",Q7y(0))
+						.attr("y2",Q7y(0))
+						.style("stroke","black")
+						.style("stroke-width",2)
+					;
+				}
+							
+				Q7C.selectAll("line.conf")
+					.data(Q7conf)
+					.enter()
+					.append("line")
+						.attr("x1",function(d,i){return Q7x(+Q7date[i]);})
+						.attr("y1",function(d,i){return Q7y(d[1]);})
+						.attr("x2",function(d,i){return Q7x(+Q7date[i]);})
+						.attr("y2",function(d,i){return Q7y(d[0]);})
+						.style("stroke","orange")
+						.style("stroke-width",2)
+						.attr("class","conf")
+					;
+				Q7C.selectAll("circle.arrival")
+					.data(Q7delay)
+					.enter()
+					.append("circle")
+						.attr("cx",function(d,i){return Q7x(+Q7date[i]);})
+						.attr("cy",function(d,i){return Q7y(d);})
+						.attr("r",5)
+						.attr("fill","red")
+				;
+			}
+			function Q7D() {
+				//	7D
+				var Q7D = d3.select("#divQ7D").append("svg")
+					.attr("width","100%")
+					.attr("height","100%")
+				;
+				var Q7delay = [];
+				var Q7date = [];
+				var Q7conf = [];
+				
+				for (psDate in goSummary.byDate) {
+					Q7date.push(psDate);
+					Q7delay.push(Mean(goSummary.byDate[psDate].total.departureDelay));
+					Q7conf.push(ConfMean(goSummary.byDate[psDate].total.departureDelay));
+				}
+				var Q7min = Math.min(0,d3.min(Q7delay,function(d){return d}));
+				var Q7max = Math.ceil(d3.max(Q7delay,function(d){return d}));
+				var Q7x = d3.scaleLinear()
+					.domain([1,31])
+					.range([60,490])
+				;
+				var Q7y = d3.scaleLinear()
+					.domain([Q7min,Q7max])
+					.range([450,5])
+				;
+				Q7D.selectAll("text.x-lbl")
+					.data(Q7date)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (Q7x(+d) - 5) + "," + 480 + ") rotate(90)";})
+						.text(function(d){return d;})
+						.style("fill","gold")
+						.style("text-anchor","middle")
+						.attr("class","x-lbl")
+				;
+				var Q7yLbl = [];
+				if (0 > Q7min) {Q7yLbl.push(0);}
+				for (pdPct=0; pdPct < 1; pdPct+=0.2) {
+					Q7yLbl.push(Q7min + (Q7max-Q7min)*pdPct);
+				}
+				Q7D.selectAll("text.y-lbl")
+					.data(Q7yLbl)
+					.enter()
+					.append("text")
+						.attr("x",5)
+						.attr("y",function(d){return Q7y(d)+5;})
+						.text(function(d){return (Math.round(d * 10)/10) + "m";})
+						.style("fill","gold")
+				;
+				Q7D.selectAll("line.grid")
+					.data(Q7yLbl)
+					.enter()
+					.append("line")
+						.attr("x1",45)
+						.attr("x2",500)
+						.attr("y1",function(d){return Q7y(d);})
+						.attr("y2",function(d){return Q7y(d);})
+						.style("stroke","silver")
+				;
+				if (0 > Q7min) {
+					Q7D.append("line")
+						.attr("x1",40)
+						.attr("x2",500)
+						.attr("y1",Q7y(0))
+						.attr("y2",Q7y(0))
+						.style("stroke","black")
+						.style("stroke-width",2)
+					;
+				}
+							
+				Q7D.selectAll("line.conf")
+					.data(Q7conf)
+					.enter()
+					.append("line")
+						.attr("x1",function(d,i){return Q7x(+Q7date[i]);})
+						.attr("y1",function(d,i){return Q7y(d[1]);})
+						.attr("x2",function(d,i){return Q7x(+Q7date[i]);})
+						.attr("y2",function(d,i){return Q7y(d[0]);})
+						.style("stroke","orange")
+						.style("stroke-width",2)
+						.attr("class","conf")
+					;
+				Q7D.selectAll("circle.depart")
+					.data(Q7delay)
+					.enter()
+					.append("circle")
+						.attr("cx",function(d,i){return Q7x(+Q7date[i]);})
+						.attr("cy",function(d,i){return Q7y(d);})
+						.attr("r",5)
+						.attr("fill","yellow")
+				;
+			}
+			function Q7E() {
+				//	7E
+				var Q7E = d3.select("#divQ7E").append("svg")
+					.attr("width","100%")
+					.attr("height","100%")
+				;
+				var Q7delay = [];
+				var Q7wkday = [];
+				var Q7conf = [];
+				
+				for (psWkday in goSummary.byWeekday) {
+					Q7wkday.push(psWkday);
+					Q7delay.push(Mean(goSummary.byWeekday[psWkday].total.arrivalDelay));
+					Q7conf.push(ConfMean(goSummary.byWeekday[psWkday].total.arrivalDelay));
+				}
+				var Q7min = Math.min(0,d3.min(Q7delay,function(d){return d}));
+				var Q7max = Math.ceil(d3.max(Q7delay,function(d){return d}));
+				var Q7x = d3.scaleLinear()
+					.domain([1,7])
+					.range([60,490])
+				;
+				var Q7y = d3.scaleLinear()
+					.domain([Q7min,Q7max])
+					.range([450,5])
+				;
+				Q7E.selectAll("text.x-lbl")
+					.data(Q7wkday)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (Q7x(+d) - 5) + "," + 480 + ") rotate(0)";})
+						.text(function(d){return WeekdayName(+d).slice(0,3);})
+						.style("fill","gold")
+						.style("text-anchor","middle")
+						.attr("class","x-lbl")
+				;
+				var Q7yLbl = [0];
+				for (pdPct=0; pdPct < 1; pdPct+=0.2) {
+					Q7yLbl.push(Q7min + (Q7max-Q7min)*pdPct);
+				}
+				Q7E.selectAll("text.y-lbl")
+					.data(Q7yLbl)
+					.enter()
+					.append("text")
+						.attr("x",5)
+						.attr("y",function(d){return Q7y(d)+5;})
+						.text(function(d){return (Math.round(d * 10)/10) + "m";})
+						.style("fill","gold")
+				;
+				Q7E.selectAll("line.grid")
+					.data(Q7yLbl)
+					.enter()
+					.append("line")
+						.attr("x1",45)
+						.attr("x2",500)
+						.attr("y1",function(d){return Q7y(d);})
+						.attr("y2",function(d){return Q7y(d);})
+						.style("stroke","silver")
+				;
+				if (0 > Q7min) {
+					Q7E.append("line")
+						.attr("x1",40)
+						.attr("x2",500)
+						.attr("y1",Q7y(0))
+						.attr("y2",Q7y(0))
+						.style("stroke","black")
+						.style("stroke-width",2)
+					;
+				}
+							
+				Q7E.selectAll("line.conf")
+					.data(Q7conf)
+					.enter()
+					.append("line")
+						.attr("x1",function(d,i){return Q7x(+Q7wkday[i]);})
+						.attr("y1",function(d,i){return Q7y(d[1]);})
+						.attr("x2",function(d,i){return Q7x(+Q7wkday[i]);})
+						.attr("y2",function(d,i){return Q7y(d[0]);})
+						.style("stroke","orange")
+						.style("stroke-width",2)
+						.attr("class","conf")
+					;
+				Q7E.selectAll("circle.arrival")
+					.data(Q7delay)
+					.enter()
+					.append("circle")
+						.attr("cx",function(d,i){return Q7x(+Q7wkday[i]);})
+						.attr("cy",function(d,i){return Q7y(d);})
+						.attr("r",5)
+						.attr("fill","red")
+				;
+			}
+			function Q7F() {
+				//	7F
+				var Q7F = d3.select("#divQ7F").append("svg")
+					.attr("width","100%")
+					.attr("height","100%")
+				;
+				var Q7delay = [];
+				var Q7wkday = [];
+				var Q7conf = [];
+				
+				for (psWkday in goSummary.byWeekday) {
+					Q7wkday.push(psWkday);
+					Q7delay.push(Mean(goSummary.byWeekday[psWkday].total.departureDelay));
+					Q7conf.push(ConfMean(goSummary.byWeekday[psWkday].total.departureDelay));
+				}
+				var Q7min = Math.min(0,d3.min(Q7delay,function(d){return d}));
+				var Q7max = Math.ceil(d3.max(Q7delay,function(d){return d}));
+				var Q7x = d3.scaleLinear()
+					.domain([1,7])
+					.range([60,490])
+				;
+				var Q7y = d3.scaleLinear()
+					.domain([Q7min,Q7max])
+					.range([450,5])
+				;
+				Q7F.selectAll("text.x-lbl")
+					.data(Q7wkday)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (Q7x(+d) - 5) + "," + 480 + ") rotate(0)";})
+						.text(function(d){return WeekdayName(+d).slice(0,3);})
+						.style("fill","gold")
+						.style("text-anchor","middle")
+						.attr("class","x-lbl")
+				;
+				var Q7yLbl = [0];
+				for (pdPct=0; pdPct < 1; pdPct+=0.2) {
+					Q7yLbl.push(Q7min + (Q7max-Q7min)*pdPct);
+				}
+				Q7F.selectAll("text.y-lbl")
+					.data(Q7yLbl)
+					.enter()
+					.append("text")
+						.attr("x",5)
+						.attr("y",function(d){return Q7y(d)+5;})
+						.text(function(d){return (Math.round(d * 10)/10) + "m";})
+						.style("fill","gold")
+				;
+				Q7F.selectAll("line.grid")
+					.data(Q7yLbl)
+					.enter()
+					.append("line")
+						.attr("x1",45)
+						.attr("x2",500)
+						.attr("y1",function(d){return Q7y(d);})
+						.attr("y2",function(d){return Q7y(d);})
+						.style("stroke","silver")
+				;
+				if (0 > Q7min) {
+					Q7F.append("line")
+						.attr("x1",40)
+						.attr("x2",500)
+						.attr("y1",Q7y(0))
+						.attr("y2",Q7y(0))
+						.style("stroke","black")
+						.style("stroke-width",2)
+					;
+				}
+							
+				Q7F.selectAll("line.conf")
+					.data(Q7conf)
+					.enter()
+					.append("line")
+						.attr("x1",function(d,i){return Q7x(+Q7wkday[i]);})
+						.attr("y1",function(d,i){return Q7y(d[1]);})
+						.attr("x2",function(d,i){return Q7x(+Q7wkday[i]);})
+						.attr("y2",function(d,i){return Q7y(d[0]);})
+						.style("stroke","orange")
+						.style("stroke-width",2)
+						.attr("class","conf")
+					;
+				Q7F.selectAll("circle.depart")
+					.data(Q7delay)
+					.enter()
+					.append("circle")
+						.attr("cx",function(d,i){return Q7x(+Q7wkday[i]);})
+						.attr("cy",function(d,i){return Q7y(d);})
+						.attr("r",5)
+						.attr("fill","yellow")
+				;
+			}
+			function Q7G() {
+				//	7G
+				var Q7G = d3.select("#divQ7G").append("svg")
+					.attr("width","100%")
+					.attr("height","100%")
+				;
+				var Q7delay = [];
+				var Q7hour = [];
+				var Q7conf = [];
+				
+				for (psHour in goSummary.byHour) {
+					Q7hour.push(psHour);
+					Q7delay.push(Mean(goSummary.byHour[psHour].total.arrivalDelay));
+					Q7conf.push(ConfMean(goSummary.byHour[psHour].total.arrivalDelay));
+				}
+				var Q7min = Math.min(0,d3.min(Q7delay,function(d){return d}));
+				var Q7max = Math.ceil(d3.max(Q7delay,function(d){return d}));
+				var Q7x = d3.scaleLinear()
+					.domain([0,24])
+					.range([60,490])
+				;
+				var Q7y = d3.scaleLinear()
+					.domain([Q7min,Q7max])
+					.range([450,5])
+				;
+				Q7G.selectAll("text.x-lbl")
+					.data(Q7hour)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (Q7x(+d) - 5) + "," + 480 + ") rotate(90)";})
+						.text(function(d){return ("0" + (+d)).slice(-2);})
+						.style("fill","gold")
+						.style("text-anchor","middle")
+						.attr("class","x-lbl")
+				;
+				var Q7yLbl = [];
+				if (0 > Q7min) {Q7yLbl.push(0);}
+				for (pdPct=0; pdPct < 1; pdPct+=0.2) {
+					Q7yLbl.push(Q7min + (Q7max-Q7min)*pdPct);
+				}
+				Q7G.selectAll("text.y-lbl")
+					.data(Q7yLbl)
+					.enter()
+					.append("text")
+						.attr("x",5)
+						.attr("y",function(d){return Q7y(d);})
+						.text(function(d){return (Math.round(d * 10)/10) + "m";})
+						.style("fill","gold")
+				;
+				Q7G.selectAll("line.grid")
+					.data(Q7yLbl)
+					.enter()
+					.append("line")
+						.attr("x1",45)
+						.attr("x2",500)
+						.attr("y1",function(d){return Q7y(d);})
+						.attr("y2",function(d){return Q7y(d);})
+						.style("stroke","silver")
+				;
+				if (0 > Q7min) {
+					Q7G.append("line")
+						.attr("x1",40)
+						.attr("x2",500)
+						.attr("y1",Q7y(0))
+						.attr("y2",Q7y(0))
+						.style("stroke","black")
+						.style("stroke-width",2)
+					;
+				}
+							
+				Q7G.selectAll("line.conf")
+					.data(Q7conf)
+					.enter()
+					.append("line")
+						.attr("x1",function(d,i){return Q7x(+Q7hour[i]);})
+						.attr("y1",function(d,i){return Q7y(d[1]);})
+						.attr("x2",function(d,i){return Q7x(+Q7hour[i]);})
+						.attr("y2",function(d,i){return Q7y(d[0]);})
+						.style("stroke","orange")
+						.style("stroke-width",2)
+						.attr("class","conf")
+					;
+				Q7G.selectAll("circle.arrival")
+					.data(Q7delay)
+					.enter()
+					.append("circle")
+						.attr("cx",function(d,i){return Q7x(+Q7hour[i]);})
+						.attr("cy",function(d,i){return Q7y(d);})
+						.attr("r",5)
+						.attr("fill","red")
+				;
+			}
+			function Q7H() {
+				//	7H
+				var Q7H = d3.select("#divQ7H").append("svg")
+					.attr("width","100%")
+					.attr("height","100%")
+				;
+				var Q7delay = [];
+				var Q7hour = [];
+				var Q7conf = [];
+				
+				for (psHour in goSummary.byHour) {
+					Q7hour.push(psHour);
+					Q7delay.push(Mean(goSummary.byHour[psHour].total.departureDelay));
+					Q7conf.push(ConfMean(goSummary.byHour[psHour].total.departureDelay));
+				}
+				var Q7min = Math.min(0,d3.min(Q7delay,function(d){return d}));
+				var Q7max = Math.ceil(d3.max(Q7delay,function(d){return d}));
+				var Q7x = d3.scaleLinear()
+					.domain([0,24])
+					.range([60,490])
+				;
+				var Q7y = d3.scaleLinear()
+					.domain([Q7min,Q7max])
+					.range([450,5])
+				;
+				Q7H.selectAll("text.x-lbl")
+					.data(Q7hour)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (Q7x(+d) - 5) + "," + 480 + ") rotate(90)";})
+						.text(function(d){return d;})
+						.style("fill","gold")
+						.style("text-anchor","middle")
+						.attr("class","x-lbl")
+				;
+				var Q7yLbl = [];
+				
+				if (0 > Q7min) {
+					Q7H.append("line")
+						.attr("x1",40)
+						.attr("x2",500)
+						.attr("y1",Q7y(0))
+						.attr("y2",Q7y(0))
+						.style("stroke","black")
+						.style("stroke-width",2)
+					;
+					Q7yLbl.push(0);
+				}
+				for (pdPct=0; pdPct < 1; pdPct+=0.2) {
+					Q7yLbl.push(Q7min + (Q7max-Q7min)*pdPct);
+				}
+				Q7H.selectAll("text.y-lbl")
+					.data(Q7yLbl)
+					.enter()
+					.append("text")
+						.attr("x",5)
+						.attr("y",function(d){return Q7y(d)+5;})
+						.text(function(d){return (Math.round(d * 10)/10) + "m";})
+						.style("fill","gold")
+				;
+				Q7H.selectAll("line.grid")
+					.data(Q7yLbl)
+					.enter()
+					.append("line")
+						.attr("x1",45)
+						.attr("x2",500)
+						.attr("y1",function(d){return Q7y(d);})
+						.attr("y2",function(d){return Q7y(d);})
+						.style("stroke","silver")
+				;
+							
+				Q7H.selectAll("line.conf")
+					.data(Q7conf)
+					.enter()
+					.append("line")
+						.attr("x1",function(d,i){return Q7x(+Q7hour[i]);})
+						.attr("y1",function(d,i){return Q7y(d[1]);})
+						.attr("x2",function(d,i){return Q7x(+Q7hour[i]);})
+						.attr("y2",function(d,i){return Q7y(d[0]);})
+						.style("stroke","orange")
+						.style("stroke-width",2)
+						.attr("class","conf")
+					;
+				Q7H.selectAll("circle.depart")
+					.data(Q7delay)
+					.enter()
+					.append("circle")
+						.attr("cx",function(d,i){return Q7x(+Q7hour[i]);})
+						.attr("cy",function(d,i){return Q7y(d);})
+						.attr("r",5)
+						.attr("fill","yellow")
+				;
+			}
+				
+		
+			/*** Q8 - Which is the best day of the week to fly
+				ontime = early - late
+				early
+				late
+			***/
+			function Q8() {
+				var Q8 = d3.select("#divQ8").append("svg")
+					.attr("width","100%")
+					.attr("height","100%")
+				;
+
+				var Q8onTime = [];
+				var Q8early = [];
+				var Q8late = [];
+				var Q8labels = [];
+
+				for (psWkdy in goSummary.byWeekday) {
+					Q8early.push(goSummary.byWeekday[psWkdy].total.numEarlyArrive / goSummary.byWeekday[psWkdy].total.flights);
+					Q8late.push(goSummary.byWeekday[psWkdy].total.numLateArrive / goSummary.byWeekday[psWkdy].total.flights);
+					Q8onTime.push((goSummary.byWeekday[psWkdy].total.flights - goSummary.byWeekday[psWkdy].total.numEarlyArrive - goSummary.byWeekday[psWkdy].total.numLateArrive)/goSummary.byWeekday[psWkdy].total.flights);
+					Q8labels.push(goSummary.byWeekday[psWkdy].total.label);
+				}
+				var Q8width = 450/7;
+				var Q8height = d3.scaleLinear()
+					.domain([0,1])
+					.range([0,475])
+				;
+				var Q8lines = [];
+				for (pnPct = 0; pnPct < .9; pnPct += 0.1) {
+					Q8lines.push(pnPct);
+				}
+
+				Q8.selectAll("rect.late")
+					.data(Q8late)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return 50 + (i*Q8width) + (0.05*Q8width);})
+						.attr("y",function(d){return 475 - Q8height(d);})
+						.attr("width",0.9 * Q8width)
+						.attr("height",function(d){return Q8height(d);})
+						.style("fill","#FF0000")
+						.attr("class","late")
+				;
+				Q8.selectAll("rect.early")
+					.data(Q8early)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return 50 + (i*Q8width) + (0.05*Q8width);})
+						.attr("y",function(d,i){return 475 - Q8height(d) - Q8height(Q8late[i]);})
+						.attr("width",0.9 * Q8width)
+						.attr("height",function(d){return Q8height(d);})
+						.style("fill","#00FF00")
+						.attr("class","early")
+				;
+				Q8.selectAll("rect.onTime")
+					.data(Q8onTime)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return 50 + (i*Q8width) + (0.05*Q8width);})
+						.attr("y",function(d,i){return 475 - Q8height(d) - Q8height(Q8late[i]) - Q8height(Q8early[i]);})
+						.attr("width",0.9 * Q8width)
+						.attr("height",function(d){return Q8height(d);})
+						.style("fill","#00FFFF")
+						.attr("class","onTime")
+				;
+				Q8.selectAll("line")
+					.data(Q8lines)
+					.enter()
+					.append("line")
+						.attr("x1",45)
+						.attr("x2",500)
+						.attr("y1",function(d){return 475 - Q8height(d);})
+						.attr("y2",function(d){return 475 - Q8height(d);})
+						.style("stroke","#999999")
+				;
+				Q8.selectAll("text.y")
+					.data(Q8lines)
+					.enter()
+					.append("text")
+						.attr("x",5)
+						.attr("y",function(d){return 480 - Q8height(d);})
+						.text(function(d){return Math.round(d * 100) + "%";})
+						.style("fill","#FFFF00")
+						.attr("class","y")
+					;
+				Q8.selectAll("text.x")
+					.data(Q8labels)
+					.enter()
+					.append("text")
+						.attr("x",function(d,i){return 50 + (i*Q8width) + (0.05*Q8width) + (Q8width/2);})
+						.attr("y",490)
+						.text(function(d){return d.slice(0,3);})
+						.style("text-anchor","middle")
+						.style("fill","#FFFF00")
+						.attr("class","x")
+					;
+				Q8.selectAll("text.bar-value.late")
+					.data(Q8late)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (45 + (i*Q8width) + (0.05*Q8width) + (Q8width/2)) + "," + (470 - Q8height(d)/2) + ") rotate(90)";})
+						.text(function(d){return (Math.round(d*1000)/10) + "%";})
+						.style("text-anchor","middle")
+						.style("fill","#000000")
+						.attr("class","bar-value late")
+				;
+				Q8.selectAll("text.bar-value.early")
+					.data(Q8early)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (45 + (i*Q8width) + (0.05*Q8width) + (Q8width/2)) + "," + (470 - Q8height(Q8late[i]) - Q8height(d)/2) + ") rotate(90)";})
+						.text(function(d){return (Math.round(d*1000)/10) + "%";})
+						.style("text-anchor","middle")
+						.style("fill","#000000")
+						.attr("class","bar-value early")
+				;
+				Q8.selectAll("text.bar-value.onTime")
+					.data(Q8onTime)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (50 + (i*Q8width) + (0.05*Q8width) + (Q8width/2)) + "," + (470 - Q8height(Q8late[i]) - Q8height(Q8early[i]) - 5) + ") rotate(0)";})
+						.text(function(d){return (Math.round(d*1000)/10) + "%";})
+						.style("text-anchor","middle")
+						.style("fill","#000000")
+						.attr("class","bar-value onTime")
+				;
+			}
+		
+			/*** Q9 - Which is the best day of the month to fly
+				ontime = early - late
+				early
+				late
+			***/
+			function Q9() {
+				var Q9 = d3.select("#divQ9").append("svg")
+					.attr("width","100%")
+					.attr("height","100%")
+				;
+
+				var Q9onTime = [];
+				var Q9early = [];
+				var Q9late = [];
+				var Q9labels = [];
+
+				for (psDate in goSummary.byDate) {
+					Q9early.push(goSummary.byDate[psDate].total.numEarlyArrive / goSummary.byDate[psDate].total.flights);
+					Q9late.push(goSummary.byDate[psDate].total.numLateArrive / goSummary.byDate[psDate].total.flights);
+					Q9onTime.push((goSummary.byDate[psDate].total.flights - goSummary.byDate[psDate].total.numEarlyArrive - goSummary.byDate[psDate].total.numLateArrive)/goSummary.byDate[psDate].total.flights);
+					Q9labels.push(goSummary.byDate[psDate].total.label);
+				}
+
+				var Q9width = 450/31;
+				var Q9height = d3.scaleLinear()
+					.domain([0,1])
+					.range([0,475])
+				;
+				var Q9lines = [];
+				for (pnPct = 0; pnPct < .9; pnPct += 0.1) {
+					Q9lines.push(pnPct);
+				}
+
+				
+				Q9.selectAll("rect.late")
+					.data(Q9late)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return 50 + (i*Q9width) + (0.05*Q9width);})
+						.attr("y",function(d){return 475 - Q9height(d);})
+						.attr("width",0.9 * Q9width)
+						.attr("height",function(d){return Q9height(d);})
+						.style("fill","#FF0000")
+						.attr("class","late")
+				;
+				Q9.selectAll("rect.early")
+					.data(Q9early)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return 50 + (i*Q9width) + (0.05*Q9width);})
+						.attr("y",function(d,i){return 475 - Q9height(d) - Q9height(Q9late[i]);})
+						.attr("width",0.9 * Q9width)
+						.attr("height",function(d){return Q9height(d);})
+						.style("fill","#00FF00")
+						.attr("class","early")
+				;
+				Q9.selectAll("rect.onTime")
+					.data(Q9onTime)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return 50 + (i*Q9width) + (0.05*Q9width);})
+						.attr("y",function(d,i){return 475 - Q9height(d) - Q9height(Q9late[i]) - Q9height(Q9early[i]);})
+						.attr("width",0.9 * Q9width)
+						.attr("height",function(d){return Q9height(d);})
+						.style("fill","#00FFFF")
+						.attr("class","onTime")
+				;
+				Q9.selectAll("line")
+					.data(Q9lines)
+					.enter()
+					.append("line")
+						.attr("x1",45)
+						.attr("x2",500)
+						.attr("y1",function(d){return 475 - Q9height(d);})
+						.attr("y2",function(d){return 475 - Q9height(d);})
+						.style("stroke","#999999")
+				;
+				Q9.selectAll("text.y")
+					.data(Q9lines)
+					.enter()
+					.append("text")
+						.attr("x",5)
+						.attr("y",function(d){return 480 - Q9height(d);})
+						.text(function(d){return Math.round(d * 100) + "%";})
+						.style("fill","#FFFF00")
+						.attr("class","y")
+					;
+				Q9.selectAll("text.x")
+					.data(Q9labels)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (50 + (i*Q9width) + (0.05*Q9width) + (Q9width/2) - 5) + "," + 485 + ") rotate(90)";})
+						.text(function(d){return d;})
+						.style("text-anchor","middle")
+						.style("fill","#FFFF00")
+						.attr("class","x")
+					;
+				Q9.selectAll("text.bar-value.late")
+					.data(Q9late)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (45 + (i*Q9width) + (0.05*Q9width) + (Q9width/2)) + "," + (470 - Q9height(d)/2) + ") rotate(90)";})
+						.text(function(d){return (Math.round(d*1000)/10) + "%";})
+						.style("text-anchor","middle")
+						.style("fill","#000000")
+						.attr("class","bar-value late")
+				;
+				Q9.selectAll("text.bar-value.early")
+					.data(Q9early)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (45 + (i*Q9width) + (0.05*Q9width) + (Q9width/2)) + "," + (470 - Q9height(Q9late[i]) - Q9height(d)/2) + ") rotate(90)";})
+						.text(function(d){return (Math.round(d*1000)/10) + "%";})
+						.style("text-anchor","middle")
+						.style("fill","#000000")
+						.attr("class","bar-value early")
+				;
+				Q9.selectAll("text.bar-value.onTime")
+					.data(Q9onTime)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (45 + (i*Q9width) + (0.05*Q9width) + (Q9width/2)) + "," + (470 - Q9height(Q9late[i]) - Q9height(Q9early[i])) + ") rotate(90)";})
+						.text(function(d){return (Math.round(d*1000)/10) + "%";})
+						.style("text-anchor","end")
+						.style("fill","#000000")
+						.style("font-size","8pt")
+						.attr("class","bar-value onTime")
+				;
+			}
+
+			/*** Q10 - Are flights given more time to reach destination in later years
+				Our JSON summary maintains totals for each year, so we can generate a bar chart
+			***/
+			function Q10(){
+				var Q10 = d3.select("#divQ10").append("svg")
+					.attr("width","100%")
+					.attr("height","100%")
+
+				var Q10ratio = [];
+				var Q10year = [];
+				
+				for (psYr in goSummary.byYear) {
+					Q10year.push(psYr);
+					
+					Q10ratio.push(Mean(goSummary.byYear[psYr].total.schedDuration) / Mean(goSummary.byYear[psYr].total.distance));
+				}
+				var Q10min = d3.min(Q10ratio,function(d){return d});
+				var Q10max = d3.max(Q10ratio,function(d){return d});
+
+				var Q10x = d3.scaleLinear()
+					.domain([0,Q10year.length - 1])
+					.range([60,490])
+				;
+				var Q10y = d3.scaleLinear()
+					.domain([Q10min,Q10max])
+					.range([450,5])
+
+				Q10.selectAll("circle.ratio")
+					.data(Q10ratio)
+					.enter()
+					.append("circle")
+						.attr("cx",function(d,i){return Q10x(i);})
+						.attr("cy",function(d,i){return Q10y(d);})
+						.attr("r",5)
+						.attr("fill","red")
+				;
+
+				Q10.selectAll("text.x-lbl")
+					.data(Q10year)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (Q10x(i) - 5) + "," + 480 + ") rotate(90)";})
+						.text(function(d){return d.slice(-2);})
+						.style("fill","gold")
+						.style("text-anchor","middle")
+						.attr("class","x-lbl")
+				;
+
+				var Q10yLbl = [];
+				for (pdPct=0; pdPct < .9; pdPct+=0.2) {
+					Q10yLbl.push(Q10min + (Q10max-Q10min)*pdPct);
+				}
+
+				Q10.selectAll("text.y-lbl")
+					.data(Q10yLbl)
+					.enter()
+					.append("text")
+						.attr("x",5)
+						.attr("y",function(d){return Q10y(d)+5;})
+						.text(function(d){return Math.round(d * 10000)/10000;})
+						.style("fill","gold")
+				;
+				Q10.selectAll("line.grid")
+					.data(Q10yLbl)
+					.enter()
+					.append("line")
+						.attr("x1",45)
+						.attr("x2",500)
+						.attr("y1",function(d){return Q10y(d);})
+						.attr("y2",function(d){return Q10y(d);})
+						.style("stroke","silver")
+				;
+			}
+
+			function Q10B(){
+				var Q10B = d3.select("#divQ10B").append("svg")
+					.attr("width","100%")
+					.attr("height","100%")
+
+				var Q10data = [];
+				var Q10year = [];
+				var Q10month = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+				var Q10vals = [];
+				
+				for (psYr in goSummary.byYear) {
+					Q10year.push(psYr.slice(-2));
+					var rec = {};
+					for (psMonth in goSummary.byYear[psYr].byMonth) {
+						rec = {"key":psYr + ":" + psMonth, "x": +psYr - 1987, "y": +psMonth - 1, "count": Mean(goSummary.byYear[psYr].byMonth[psMonth].total.schedDuration) / Mean(goSummary.byYear[psYr].byMonth[psMonth].total.distance)};
+						Q10data.push(rec);
+						Q10vals.push(Math.round(rec.count * 100)/100);
+					}
+				}
+				
+				Heatmap(Q10B,Q10data,Q10year,Q10month,"gold",Q10vals,"black");
+			}
+
+			/*** Q14 - How much does weather contribute to arrival delay
+			***/
+			function Q14(){
+				var Q14 = d3.select("#divQ14").append("svg")
+					.attr("width","100%")
+					.attr("height","100%")
+
+				var Q14ratio = [];
+				var Q14month = [];
+				
+				for (psMon in goSummary.byMonth) {
+					Q14month.push(psMon);
+					
+					Q14ratio.push(goSummary.byMonth[psMon].total.weatherDelay.sum / goSummary.byMonth[psMon].total.arrivalDelay.sum);
+				}
+
+				var Q14x = d3.scaleLinear()
+					.domain([1,12])
+					.range([60,490])
+				;
+				var Q14y = d3.scaleLinear()
+					.domain([0,0.1])
+					.range([450,5])
+				;
+				
+				Q14.selectAll("circle.ratio")
+					.data(Q14ratio)
+					.enter()
+					.append("circle")
+						.attr("cx",function(d,i){return Q14x(+Q14month[i]);})
+						.attr("cy",function(d,i){return Q14y(d);})
+						.attr("r",5)
+						.attr("fill","red")
+				;
+
+				Q14.selectAll("text.x-lbl")
+					.data(Q14month)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (Q14x(+d) - 5) + "," + 480 + ") rotate(0)";})
+						.text(function(d){return MonthName(+d).slice(0,3);})
+						.style("fill","gold")
+						.style("text-anchor","middle")
+						.attr("class","x-lbl")
+				;
+
+				var Q14yLbl = [];
+				for (pdPct=0; pdPct < .09; pdPct+=0.01) {
+					Q14yLbl.push(pdPct);
+				}
+
+				Q14.selectAll("text.y-lbl")
+					.data(Q14yLbl)
+					.enter()
+					.append("text")
+						.attr("x",5)
+						.attr("y",function(d){return Q14y(d)+5;})
+						.text(function(d){return (Math.round(d * 100)) + "%";})
+						.style("fill","gold")
+				;
+				Q14.selectAll("line.grid")
+					.data(Q14yLbl)
+					.enter()
+					.append("line")
+						.attr("x1",45)
+						.attr("x2",500)
+						.attr("y1",function(d){return Q14y(d);})
+						.attr("y2",function(d){return Q14y(d);})
+						.style("stroke","silver")
+				;
+			}
+
+			function Q14B() {
+				var Q14 = d3.select("#divQ14B").append("svg")
+					.attr("width","100%")
+					.attr("height","100%")
+				;
+
+				var Q14carrier = [];
+				var Q14weather = [];
+				var Q14NAS = [];
+				var Q14security = [];
+				var Q14lateAC = [];
+				var Q14other = [];
+				var pdTotalDelay = 0.0;
+				var pdOtherDelay = 0.0;
+				var Q14labels = [];
+
+				for (psMonth in goSummary.byMonth) {
+					Q14labels.push(MonthName(+psMonth).slice(0,3));
+					pdTotalDelay = goSummary.byMonth[psMonth].total.arrivalDelay.sum
+					Q14carrier.push(goSummary.byMonth[psMonth].total.carrierDelay.sum / pdTotalDelay);
+					Q14weather.push(goSummary.byMonth[psMonth].total.weatherDelay.sum / pdTotalDelay);
+					Q14NAS.push(goSummary.byMonth[psMonth].total.NASDelay.sum / pdTotalDelay);
+					Q14security.push(goSummary.byMonth[psMonth].total.securityDelay.sum / pdTotalDelay);
+					Q14lateAC.push(goSummary.byMonth[psMonth].total.lateAC.sum / pdTotalDelay);
+					
+					pdOtherDelay = pdTotalDelay - goSummary.byMonth[psMonth].total.carrierDelay.sum - 
+									goSummary.byMonth[psMonth].total.weatherDelay.sum - 
+									goSummary.byMonth[psMonth].total.NASDelay.sum - 
+									goSummary.byMonth[psMonth].total.securityDelay.sum - 
+									goSummary.byMonth[psMonth].total.lateAC.sum
+					;
+					Q14other.push(pdOtherDelay / pdTotalDelay);
+				}
+				
+				var Q14width = 450/12;
+				var Q14height = d3.scaleLinear()
+					.domain([0,1])
+					.range([0,475])
+				;
+				var Q14lines = [];
+				for (pnPct = 0; pnPct < .9; pnPct += 0.1) {
+					Q14lines.push(pnPct);
+				}
+
+				
+				Q14.selectAll("rect.weather")
+					.data(Q14weather)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return 50 + (i*Q14width) + (0.05*Q14width);})
+						.attr("y",function(d){return 475 - Q14height(d);})
+						.attr("width",0.9 * Q14width)
+						.attr("height",function(d){return Q14height(d);})
+						.style("fill","#FF0000")
+						.attr("class","weather")
+				;
+				Q14.selectAll("rect.carrier")
+					.data(Q14carrier)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return 50 + (i*Q14width) + (0.05*Q14width);})
+						.attr("y",function(d,i){return 475 - Q14height(d) - Q14height(Q14weather[i]);})
+						.attr("width",0.9 * Q14width)
+						.attr("height",function(d){return Q14height(d);})
+						.style("fill","#FF8800")
+						.attr("class","carrier")
+				;
+				Q14.selectAll("rect.NAS")
+					.data(Q14NAS)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return 50 + (i*Q14width) + (0.05*Q14width);})
+						.attr("y",function(d,i){return 475 - Q14height(d) - Q14height(Q14weather[i]) - Q14height(Q14carrier[i]);})
+						.attr("width",0.9 * Q14width)
+						.attr("height",function(d){return Q14height(d);})
+						.style("fill","#FFFF00")
+						.attr("class","NAS")
+				;
+				Q14.selectAll("rect.security")
+					.data(Q14security)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return 50 + (i*Q14width) + (0.05*Q14width);})
+						.attr("y",function(d,i){return 475 - Q14height(d) - Q14height(Q14weather[i]) - Q14height(Q14carrier[i]) - Q14height(Q14NAS[i]);})
+						.attr("width",0.9 * Q14width)
+						.attr("height",function(d){return Q14height(d);})
+						.style("fill","#009900")
+						.attr("class","NAS")
+				;
+				Q14.selectAll("rect.late")
+					.data(Q14lateAC)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return 50 + (i*Q14width) + (0.05*Q14width);})
+						.attr("y",function(d,i){return 475 - Q14height(d) - Q14height(Q14weather[i]) - Q14height(Q14carrier[i]) - Q14height(Q14NAS[i]) - Q14height(Q14security[i]);})
+						.attr("width",0.9 * Q14width)
+						.attr("height",function(d){return Q14height(d);})
+						.style("fill","#00FFFF")
+						.attr("class","late")
+				;
+				Q14.selectAll("rect.other")
+					.data(Q14other)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return 50 + (i*Q14width) + (0.05*Q14width);})
+						.attr("y",function(d,i){return 475 - Q14height(d) - Q14height(Q14weather[i]) - Q14height(Q14carrier[i]) - Q14height(Q14NAS[i]) - Q14height(Q14security[i]) - Q14height(Q14lateAC);})
+						.attr("width",0.9 * Q14width)
+						.attr("height",function(d){return Q14height(d);})
+						.style("fill","#FF00FF")
+						.attr("class","other")
+				;
+				
+				Q14.selectAll("line")
+					.data(Q14lines)
+					.enter()
+					.append("line")
+						.attr("x1",45)
+						.attr("x2",500)
+						.attr("y1",function(d){return 475 - Q14height(d);})
+						.attr("y2",function(d){return 475 - Q14height(d);})
+						.style("stroke","#999999")
+				;
+				Q14.selectAll("text.y")
+					.data(Q14lines)
+					.enter()
+					.append("text")
+						.attr("x",5)
+						.attr("y",function(d){return 480 - Q14height(d);})
+						.text(function(d){return Math.round(d * 100) + "%";})
+						.style("fill","#FFFF00")
+						.attr("class","y")
+					;
+				Q14.selectAll("text.x")
+					.data(Q14labels)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (50 + (i*Q14width) + (0.05*Q14width) + (Q14width/2) - 5) + "," + 490 + ") rotate(0)";})
+						.text(function(d){return d;})
+						.style("text-anchor","middle")
+						.style("fill","#FFFF00")
+						.attr("class","x")
+					;
+				Q14.selectAll("text.bar-value.weather")
+					.data(Q14weather)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (45 + (i*Q14width) + (0.05*Q14width) + (Q14width/2)) + "," + (475 - Q14height(d)/2) + ") rotate(0)";})
+						.text(function(d){return (Math.round(d*1000)/10) + "%";})
+						.style("text-anchor","middle")
+						.style("fill","#000000")
+						.style("font-size","8pt")
+						.attr("class","bar-value weather")
+				;
+				Q14.selectAll("text.bar-value.carrier")
+					.data(Q14carrier)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (45 + (i*Q14width) + (0.05*Q14width) + (Q14width/2)) + "," + (475 - Q14height(Q14weather[i]) - Q14height(d)/2) + ") rotate(0)";})
+						.text(function(d){return (Math.round(d*1000)/10) + "%";})
+						.style("text-anchor","middle")
+						.style("fill","#000000")
+						.style("font-size","8pt")
+						.attr("class","bar-value carrier")
+				;
+				Q14.selectAll("text.bar-value.NAS")
+					.data(Q14NAS)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (45 + (i*Q14width) + (0.05*Q14width) + (Q14width/2)) + "," + (475 - Q14height(Q14carrier[i]) - Q14height(Q14weather[i]) - Q14height(d)/2) + ") rotate(0)";})
+						.text(function(d){return (Math.round(d*1000)/10) + "%";})
+						.style("text-anchor","middle")
+						.style("fill","#000000")
+						.style("font-size","8pt")
+						.attr("class","bar-value NAS")
+				;
+				Q14.selectAll("text.bar-value.security")
+					.data(Q14security)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (45 + (i*Q14width) + (0.05*Q14width) + (Q14width/2)) + "," + (475 - Q14height(Q14NAS[i]) - Q14height(Q14carrier[i]) - Q14height(Q14weather[i]) - Q14height(d)/2) + ") rotate(0)";})
+						.text(function(d){return (d > 0.3) ? (Math.round(d*1000)/10) + "%" : "";})
+						.style("text-anchor","middle")
+						.style("fill","#000000")
+						.style("font-size","8pt")
+						.attr("class","bar-value security")
+				;
+				Q14.selectAll("text.bar-value.late")
+					.data(Q14lateAC)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (45 + (i*Q14width) + (0.05*Q14width) + (Q14width/2)) + "," + (475 - Q14height(Q14security[i]) - Q14height(Q14NAS[i]) - Q14height(Q14carrier[i]) - Q14height(Q14weather[i]) - Q14height(d)/2) + ") rotate(0)";})
+						.text(function(d){return (Math.round(d*1000)/10) + "%";})
+						.style("text-anchor","middle")
+						.style("fill","#000000")
+						.style("font-size","8pt")
+						.attr("class","bar-value late")
+				;
+				Q14.selectAll("text.bar-value.other")
+					.data(Q14other)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (45 + (i*Q14width) + (0.05*Q14width) + (Q14width/2)) + "," + (475 - Q14height(Q14lateAC[i]) - Q14height(Q14security[i]) - Q14height(Q14NAS[i]) - Q14height(Q14carrier[i]) - Q14height(Q14weather[i]) - Q14height(d)/2) + ") rotate(0)";})
+						.text(function(d){return (Math.round(d*1000)/10) + "%";})
+						.style("text-anchor","middle")
+						.style("fill","#000000")
+						.style("font-size","8pt")
+						.attr("class","bar-value other")
+				;
+			}
+			
+			// QCarrier
+			function QCarrier() {
+				var pdArrive = [];
+				var pdDepart = [];
+				var psCarrier = [];
+				var pnCancel = [];
+				var pnDivert = [];
+				var pctDepLate = [];
+				var pctArrLate = [];
+				var pctDepEarly = [];
+				var pctArrEarly = [];
+				var pctDepOnTime = [];
+				var pctArrOnTime = []
+				var Chart5carrier = [];
+				var Chart5weather = [];
+				var Chart5NAS = [];
+				var Chart5security = [];
+				var Chart5lateAC = [];
+				var Chart5other = [];
+				
+				var markers = {"arrive": [{x: 0, y: 5},{x: 5, y: -5},{x: -5, y: -5},{x: 0, y: 5}],"depart":[{x: 0, y: -5},{x: -5, y: 5},{x: 5, y: 5},{x: 0, y: -5}]};
+				
+				//	Get the mean arrival and departure delays
+				for (psC in goSummary.byCarrier) {
+					psCarrier.push(psC);
+					pdArrive.push(Mean(goSummary.byCarrier[psC].total.arrivalDelay));
+					pdDepart.push(Mean(goSummary.byCarrier[psC].total.departureDelay));
+					
+					pnCancel.push(goSummary.byCarrier[psC].total.numCancelled);
+					pnDivert.push(goSummary.byCarrier[psC].total.numDiverted);
+					
+					pctDepLate.push(goSummary.byCarrier[psC].total.numLateTakeoff / goSummary.byCarrier[psC].total.flights);
+					pctDepEarly.push(goSummary.byCarrier[psC].total.numEarlyTakeoff / goSummary.byCarrier[psC].total.flights);
+					pctDepOnTime.push((goSummary.byCarrier[psC].total.flights - goSummary.byCarrier[psC].total.numLateTakeoff - goSummary.byCarrier[psC].total.numEarlyTakeoff) / goSummary.byCarrier[psC].total.flights)
+					
+					pctArrLate.push(goSummary.byCarrier[psC].total.numLateArrive / goSummary.byCarrier[psC].total.flights);
+					pctArrEarly.push(goSummary.byCarrier[psC].total.numEarlyArrive / goSummary.byCarrier[psC].total.flights);
+					pctArrOnTime.push((goSummary.byCarrier[psC].total.flights - goSummary.byCarrier[psC].total.numLateArrive - goSummary.byCarrier[psC].total.numEarlyArrive) / goSummary.byCarrier[psC].total.flights)
+
+				}
+
+				//	Get min/max delay for our chart
+				var minDelay = Math.floor(Math.min(d3.min(pdArrive,function(d){return d;}),d3.min(pdDepart,function(d){return d;})) - 0.5);
+				var maxDelay = Math.ceil(Math.max(d3.max(pdArrive,function(d){return d;}),d3.max(pdDepart,function(d){return d;})) + 0.5);
+				var avgArrive = d3.mean(pdArrive,function(d){return d;});
+				var avgDepart = d3.mean(pdDepart,function(d){return d;});
+				
+				//	Build a scaler for the Y axis
+				var scaleY = d3.scaleLinear()
+					.domain([minDelay,maxDelay])
+					.range([450,0])
+				;
+
+				//	Add a chart sized for the number of carriers
+				var pdWidth = 20;	// per carrier
+				var pnLeftMargin = 50;
+				
+				var Chart = d3.select("#divQCarrier1").append("svg")
+					.attr("width",pnLeftMargin + (pdWidth * psCarrier.length) + pdWidth/2)
+					.attr("height","500")
+					.attr("id","avgDelayCarrier")
+				;
+				
+				//	Add confidence interval
+				var currentX = 0.0;
+				var currentCI = [];
+				
+				//	Draw the confidence intervals
+				Chart.selectAll("line.arriveCI")
+					.data(psCarrier)
+					.enter()
+					.append("line")
+						.attr("x1",function(d,i){return pnLeftMargin + (i * pdWidth); })
+						.attr("x2",function(d,i){return pnLeftMargin + (i * pdWidth); })
+						.attr("y1",function(d,i){return scaleY(ConfMean(goSummary.byCarrier[d].total.arrivalDelay)[0]);})
+						.attr("y2",function(d,i){return scaleY(ConfMean(goSummary.byCarrier[d].total.arrivalDelay)[1]);})
+						.style("stroke","orange")
+						.style("stroke-width",2)
+						.attr("class","arriveCI")
+				;
+				
+				//	Draw the confidence intervals
+				Chart.selectAll("line.departCI")
+					.data(psCarrier)
+					.enter()
+					.append("line")
+						.attr("x1",function(d,i){return pnLeftMargin + (i * pdWidth); })
+						.attr("x2",function(d,i){return pnLeftMargin + (i * pdWidth); })
+						.attr("y1",function(d,i){return scaleY(ConfMean(goSummary.byCarrier[d].total.departureDelay)[0]);})
+						.attr("y2",function(d,i){return scaleY(ConfMean(goSummary.byCarrier[d].total.departureDelay)[1]);})
+						.style("stroke","gold")
+						.style("stroke-width",2)
+						.attr("class","departCI")
+				;
+				
+				Chart.append("line")
+						.attr("x1",pnLeftMargin - 5)
+						.attr("x2",pnLeftMargin + (pdWidth * psCarrier.length))
+						.attr("y1",scaleY(avgDepart))
+						.attr("y2",scaleY(avgDepart))
+						.attr("stroke","yellow")
+						.attr("stroke-width",2)
+						.attr("stroke-dasharray","2,5")
+						.attr("class","avgDepart")
+				;
+				
+				Chart.append("line")
+						.attr("x1",pnLeftMargin - 5)
+						.attr("x2",pnLeftMargin + (pdWidth * psCarrier.length))
+						.attr("y1",scaleY(avgArrive))
+						.attr("y2",scaleY(avgArrive))
+						.attr("stroke","red")
+						.attr("stroke-width",2)
+						.attr("stroke-dasharray","5,2")
+						.attr("class","avgArrive")
+				;
+				
+				Chart.append("line")
+					.attr("x1",pnLeftMargin - 5)
+					.attr("x2",pnLeftMargin + (pdWidth * pdDepart.length))
+					.attr("y1",scaleY(0))
+					.attr("y2",scaleY(0))
+					.attr("stroke","black")
+					.attr("class","0-line")
+				;
+				
+				//	Add sticks
+				Chart.selectAll("line.stick")
+					.data(pdDepart)
+					.enter()
+					.append("line")
+						.attr("x1",function(d,i){return pnLeftMargin + (i * pdWidth); })
+						.attr("x2",function(d,i){return pnLeftMargin + (i * pdWidth); })
+						.attr("y1",function(d,i){return scaleY(Math.max(d,pdArrive[i]));})
+						.attr("y2",450)
+						.style("stroke",function(d,i){return (d > pdArrive[i]) ? "yellow" : "red";})
+						.style("stroke-dasharray","1,10")
+						.attr("class","stick")
+				;
+
+				//	Add arrival delays
+				var thisMarker = d3.line().x(function(d,i){return d.x;}).y(function(d,i){return d.y;});
+				Chart.selectAll("path.arrive")
+					.data(pdArrive)
+					.enter()
+					.append("path")
+						.attr("d",bodyDraw(airliner))
+						.attr("transform",function(d,i){return "translate(" + (pnLeftMargin + (i * pdWidth)) + "," + scaleY(d) + ") scale(0.5,0.5)";})
+						.attr("fill","red")
+						.attr("class","arrive")
+				;
+				
+				//	Add departure delays
+				Chart.selectAll("path.depart")
+					.data(pdDepart)
+					.enter()
+					.append("path")
+						.attr("d",bodyDraw(airliner))
+						.attr("transform",function(d,i){return "translate(" + (pnLeftMargin + (i * pdWidth)) + "," + scaleY(d) + ") rotate(180) scale(0.5,0.5)";})
+						.attr("fill","yellow")
+						.attr("class","depart")
+				;
+				
+				//	Write the Y labels
+				var yLbl = [];
+				for (piPct=0; piPct<0.9; piPct+=0.1) {
+					yLbl.push(Math.round((minDelay + (maxDelay - minDelay) * piPct) * 100)/100);
+				}
+				Chart.selectAll("text.y-lbl")
+					.data(yLbl)
+					.enter()
+					.append("text")
+						.attr("x",pnLeftMargin - 10)
+						.attr("y",function(d){return scaleY(d) + 5;})
+						.style("text-anchor","end")
+						.text(function(d){return d;})
+						.style("fill","gold")
+				;
+				
+				//	Write the X labels
+				Chart.selectAll("text.x-lbl")
+					.data(psCarrier)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (pnLeftMargin + (i * pdWidth) - 5) + ",460) rotate(90)";})
+						.text(function(d){return d;})
+						.style("fill","gold")
+				;
+				
+				/*	Cancel * divert */
+				var Chart2 = d3.select("#divQCarrier1").append("svg")
+					.attr("width",pnLeftMargin + (pdWidth * psCarrier.length) + pdWidth/2)
+					.attr("height","500")
+					.attr("id","canxCarrier")
+				;
+				var pnLeftMargin = 60;
+				var minCanx = 1;
+				var maxCanx = Math.ceil(Math.max(d3.max(pnCancel,function(d){return d;}),d3.max(pnDivert,function(d){return d;})) / 1000) * 1000 * 1.3;
+				var scaleY = d3.scaleLog().domain([minCanx,maxCanx]).range([450,0]);
+				var avgCanx = d3.mean(pnCancel,function(d){return d;});
+				var avgDivr = d3.mean(pnDivert,function(d){return d;});
+				
+				var yTicks = [1,3,10,30,100,300,1000,3000,10000,30000,100000,300000];
+				
+				//	Y-axis grid lines
+				Chart2.selectAll("line.y-lbl")
+					.data(yTicks)
+					.enter()
+					.append("line")
+						.attr("x1",pnLeftMargin - 4)
+						.attr("x2",pnLeftMargin + (pdWidth * pnCancel.length))
+						.attr("y1",function(d,i){return scaleY(d);})
+						.attr("y2",function(d,i){return scaleY(d);})
+						.attr("stroke","silver")
+						.attr("class","y-lbl")
+				;
+				//	Y-axis labels
+				Chart2.selectAll("text.y-lbl")
+					.data(yTicks)
+					.enter()
+					.append("text")
+						.attr("x",pnLeftMargin - 5)
+						.attr("y",function(d,i){return scaleY(d) + 5;})
+						.style("text-anchor","end")
+						.text(function(d){return d;})
+						.attr("fill","gold")
+						.attr("class","y-lbl")
+				;
+
+				//	Average cancellations line
+				Chart2.append("line")
+					.attr("x1",pnLeftMargin)
+					.attr("x2",pnLeftMargin + (pdWidth * pnCancel.length))
+					.attr("y1",scaleY(avgCanx))
+					.attr("y2",scaleY(avgCanx))
+					.attr("stroke","magenta")
+					.attr("stroke-dasharray","2,5")
+					.attr("class","avgCanx")
+				;
+
+				//	Average diverts line
+				Chart2.append("line")
+					.attr("x1",pnLeftMargin)
+					.attr("x2",pnLeftMargin + (pdWidth * pnCancel.length))
+					.attr("y1",scaleY(avgDivr))
+					.attr("y2",scaleY(avgDivr))
+					.attr("stroke","gold")
+					.attr("stroke-dasharray","3,4")
+					.attr("class","avgDivr")
+				;
+
+				//	Cancel symbol
+				Chart2.selectAll("circle.canx")
+					.data(pnCancel)
+					.enter()
+					.append("circle")
+						.attr("cx",function(d,i){return pnLeftMargin + (i * pdWidth);})
+						.attr("cy",function(d,i){return scaleY(d);})
+						.attr("r",8)
+						.attr("stroke",function(d){return (d > 0) ? "red" : "none";})
+						.attr("stroke-width",2)
+						.attr("fill","none")
+						.attr("class","canx")
+				;
+				Chart2.selectAll("line.canx")
+					.data(pnCancel)
+					.enter()
+					.append("line")
+						.attr("x1",0)
+						.attr("x2",0)
+						.attr("y1",-8)
+						.attr("y2",8)
+						.attr("transform",function(d,i){return "translate(" + (pnLeftMargin + (i * pdWidth)) + "," + scaleY(d) + ") rotate(45)";})
+						.attr("stroke",function(d){return (d > 0) ? "red" : "none";})
+						.attr("stroke-width",2)
+						.attr("class","canx")
+				;
+				
+				//	dotted lines from cancels to carrier
+				Chart2.selectAll("line.stick")
+					.data(pnCancel)
+					.enter()
+					.append("line")
+						.attr("x1",function(d,i){return pnLeftMargin + (i * pdWidth);})
+						.attr("x2",function(d,i){return pnLeftMargin + (i * pdWidth);})
+						.attr("y1",function(d,i){return scaleY(d);})
+						.attr("y2",450)
+						.attr("stroke","yellow")
+						.attr("stroke-width",2)
+						.attr("stroke-dasharray","1,10")
+						.attr("class","stick")
+				;
+				
+				//	Add diverts
+				Chart2.selectAll("path.divert")
+					.data(pnDivert)
+					.enter()
+					.append("path")
+						.attr("d",bodyDraw(airliner))
+						.attr("transform",function(d,i){return "translate(" + (pnLeftMargin + (i * pdWidth)) + "," + scaleY(d) + ") rotate(-45) scale(0.5,0.5)";})
+						.attr("fill",function(d){return (d > 0) ? "yellow" : "none";})
+						.attr("class","divert")
+				;
+				
+				//	Write the X labels
+				Chart2.selectAll("text.x-lbl")
+					.data(psCarrier)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (pnLeftMargin + (i * pdWidth) - 5) + ",460) rotate(90)";})
+						.text(function(d){return d;})
+						.style("fill","gold")
+				;
+		
+				/*	Chart 3 - arrivals */
+				var Chart3 = d3.select("#divQCarrier1").append("svg")
+					.attr("width",pnLeftMargin + (pdWidth * psCarrier.length) + pdWidth/2)
+					.attr("height","500")
+					.attr("id","canxCarrier")
+				;
+				var pnLeftMargin = 50;
+
+				
+				var scaleY = d3.scaleLinear()
+					.domain([0,1])
+					.range([450,0])
+				;
+				var scaleH = d3.scaleLinear()
+					.domain([0,1])
+					.range([0,450])
+				;
+				var yTicks = [];
+				for (pnPct = 0; pnPct < .9; pnPct += 0.1) {
+					yTicks.push(pnPct);
+				}
+
+				Chart3.selectAll("rect.late")
+					.data(pctArrLate)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return pnLeftMargin + (i * pdWidth) + (0.05 * pdWidth);})
+						.attr("y",function(d){return scaleY(d);})
+						.attr("width",0.9 * pdWidth)
+						.attr("height",function(d){return scaleH(d);})
+						.style("fill","#990000")
+						.attr("class","late")
+				;
+				Chart3.selectAll("rect.early")
+					.data(pctArrEarly)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return pnLeftMargin + (i * pdWidth) + (0.05 * pdWidth);})
+						.attr("y",function(d,i){return 450 - scaleH(d) - scaleH(pctArrLate[i]);})
+						.attr("width",0.9 * pdWidth)
+						.attr("height",function(d){return scaleH(d);})
+						.style("fill","#009900")
+						.attr("class","early")
+				;
+				Chart3.selectAll("rect.onTime")
+					.data(pctArrOnTime)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return pnLeftMargin + (i * pdWidth) + (0.05 * pdWidth);})
+						.attr("y",function(d,i){return 450 - scaleH(d) - scaleH(pctArrLate[i]) - scaleH(pctArrEarly[i]);})
+						.attr("width",0.9 * pdWidth)
+						.attr("height",function(d){return scaleH(d);})
+						.style("fill","#00FFFF")
+						.attr("class","onTime")
+				;
+				Chart3.selectAll("text.bar-value.late")
+					.data(pctArrLate)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (pnLeftMargin - 5 + (i * pdWidth) + (pdWidth / 2)) + "," + (450 - (scaleH(d)/2)) + ") rotate(90)";})
+						.text(function(d){return (Math.round(d*1000)/10) + "%";})
+						.style("text-anchor","middle")
+						.style("fill","#FFFFFF")
+						.style("font-size","10pt")
+						.attr("class","bar-value late")
+				;
+				Chart3.selectAll("text.bar-value.early")
+					.data(pctArrEarly)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (pnLeftMargin - 5 + (i * pdWidth) + (pdWidth / 2)) + "," + (450 - scaleH(pctArrLate[i]) - (scaleH(d)/2)) + ") rotate(90)";})
+						.text(function(d){return (Math.round(d*1000)/10) + "%";})
+						.style("text-anchor","middle")
+						.style("fill","#FFFFFF")
+						.style("font-size","10pt")
+						.attr("class","bar-value early")
+				;
+				Chart3.selectAll("text.bar-value.onTime")
+					.data(pctArrOnTime)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (pnLeftMargin - 5 + (i * pdWidth) + (pdWidth / 2)) + "," + 5 + ") rotate(90)";})
+						.text(function(d){return (Math.round(d*1000)/10) + "%";})
+						.style("text-anchor","start")
+						.style("fill","#000000")
+						.style("font-size","8pt")
+						.attr("class","bar-value onTime")
+				;
+				
+				//	Write the X labels
+				Chart3.selectAll("text.x-lbl")
+					.data(psCarrier)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (pnLeftMargin - 5 + (i * pdWidth) + (pdWidth / 2)) + ",460) rotate(90)";})
+						.text(function(d){return d;})
+						.style("fill","gold")
+				;
+				
+				//	Y-axis grid
+				Chart3.selectAll("line.y-grid")
+					.data(yTicks)
+					.enter()
+					.append("line")
+						.attr("x1",pnLeftMargin - 4)
+						.attr("x2",pnLeftMargin + (pdWidth * psCarrier.length))
+						.attr("y1",function(d,i){return scaleH(d);})
+						.attr("y2",function(d,i){return scaleH(d);})
+						.attr("stroke","silver")
+						.attr("class","y-grid")
+				;
+				Chart3.selectAll("text.y-lbl")
+					.data(yTicks)
+					.enter()
+					.append("text")
+						.attr("x",pnLeftMargin - 5)
+						.attr("y",function(d,i){return 450 - scaleH(d) + 5;})
+						.text(function(d){return Math.round(d*100) + "%";})
+						.attr("fill","gold")
+						.style("text-anchor","end")
+						.attr("class","y-lbl")
+				;
+
+						
+				/*	Chart 4 - departures */
+				var Chart4 = d3.select("#divQCarrier1").append("svg")
+					.attr("width",pnLeftMargin + (pdWidth * psCarrier.length) + pdWidth/2)
+					.attr("height","500")
+					.attr("id","canxCarrier")
+				;
+				var pnLeftMargin = 50;
+
+				
+				var scaleY = d3.scaleLinear()
+					.domain([0,1])
+					.range([450,0])
+				;
+				var scaleH = d3.scaleLinear()
+					.domain([0,1])
+					.range([0,450])
+				;
+				var yTicks = [];
+				for (pnPct = 0; pnPct < .9; pnPct += 0.1) {
+					yTicks.push(pnPct);
+				}
+
+				Chart4.selectAll("rect.late")
+					.data(pctDepLate)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return pnLeftMargin + (i * pdWidth) + (0.05 * pdWidth);})
+						.attr("y",function(d){return scaleY(d);})
+						.attr("width",0.9 * pdWidth)
+						.attr("height",function(d){return scaleH(d);})
+						.style("fill","#990000")
+						.attr("class","late")
+				;
+				Chart4.selectAll("rect.early")
+					.data(pctDepEarly)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return pnLeftMargin + (i * pdWidth) + (0.05 * pdWidth);})
+						.attr("y",function(d,i){return 450 - scaleH(d) - scaleH(pctDepLate[i]);})
+						.attr("width",0.9 * pdWidth)
+						.attr("height",function(d){return scaleH(d);})
+						.style("fill","#009900")
+						.attr("class","early")
+				;
+				Chart4.selectAll("rect.onTime")
+					.data(pctDepOnTime)
+					.enter()
+					.append("rect")
+						.attr("x",function(d,i){return pnLeftMargin + (i * pdWidth) + (0.05 * pdWidth);})
+						.attr("y",function(d,i){return 450 - scaleH(d) - scaleH(pctDepLate[i]) - scaleH(pctDepEarly[i]);})
+						.attr("width",0.9 * pdWidth)
+						.attr("height",function(d){return scaleH(d);})
+						.style("fill","#00FFFF")
+						.attr("class","onTime")
+				;
+				Chart4.selectAll("text.bar-value.late")
+					.data(pctDepLate)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (pnLeftMargin - 5 + (i * pdWidth) + (pdWidth / 2)) + "," + (450 - (scaleH(d)/2)) + ") rotate(90)";})
+						.text(function(d){return (Math.round(d*1000)/10) + "%";})
+						.style("text-anchor","middle")
+						.style("fill","#FFFFFF")
+						.style("font-size","10pt")
+						.attr("class","bar-value late")
+				;
+				Chart4.selectAll("text.bar-value.early")
+					.data(pctDepEarly)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (pnLeftMargin - 5 + (i * pdWidth) + (pdWidth / 2)) + "," + (450 - scaleH(pctDepLate[i]) - (scaleH(d)/2)) + ") rotate(90)";})
+						.text(function(d){return (d > 0.07) ? (Math.round(d*1000)/10) + "%" : "";})
+						.style("text-anchor","middle")
+						.style("fill","#FFFFFF")
+						.style("font-size","10pt")
+						.attr("class","bar-value early")
+				;
+				Chart4.selectAll("text.bar-value.onTime")
+					.data(pctDepOnTime)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (pnLeftMargin - 5 + (i * pdWidth) + (pdWidth / 2)) + "," + ((d > 0.07) ? 450 - scaleH(pctDepLate[i]) - scaleH(pctDepEarly[i]) - (scaleH(d)/2) : 15) + ") rotate(90)";})
+						.text(function(d){return (Math.round(d*1000)/10) + "%";})
+						.style("text-anchor","middle")
+						.style("fill","#000000")
+						.style("font-size","8pt")
+						.attr("class","bar-value onTime")
+				;
+				
+				//	Write the X labels
+				Chart4.selectAll("text.x-lbl")
+					.data(psCarrier)
+					.enter()
+					.append("text")
+						.attr("transform",function(d,i){return "translate(" + (pnLeftMargin - 5 + (i * pdWidth) + (pdWidth / 2)) + ",460) rotate(90)";})
+						.text(function(d){return d;})
+						.style("fill","gold")
+				;
+				
+				//	Y-axis grid
+				Chart4.selectAll("line.y-grid")
+					.data(yTicks)
+					.enter()
+					.append("line")
+						.attr("x1",pnLeftMargin - 4)
+						.attr("x2",pnLeftMargin + (pdWidth * psCarrier.length))
+						.attr("y1",function(d,i){return scaleH(d);})
+						.attr("y2",function(d,i){return scaleH(d);})
+						.attr("stroke","silver")
+						.attr("class","y-grid")
+				;
+				Chart4.selectAll("text.y-lbl")
+					.data(yTicks)
+					.enter()
+					.append("text")
+						.attr("x",pnLeftMargin - 5)
+						.attr("y",function(d,i){return 450 - scaleH(d) + 5;})
+						.text(function(d){return Math.round(d*100) + "%";})
+						.attr("fill","gold")
+						.style("text-anchor","end")
+						.attr("class","y-lbl")
+				;
+
+			}
+		</script>
+	</body>
+</html>
